@@ -20,6 +20,27 @@ const SESSION_RENEW_INTERVAL_MS = 20 * 60 * 1000; // 20 minutes
 // miss any packets at the exact swap moment.
 const SOCKET_OVERLAP_MS = 2 * 1000; // 2 seconds
 
+function normalizeSttLanguage(language) {
+    if (!language || typeof language !== 'string') return 'ru';
+
+    const normalized = language.trim().toLowerCase();
+    if (!normalized) return 'ru';
+    if (normalized === 'auto') return 'auto';
+
+    const aliases = {
+        russian: 'ru',
+        'русский': 'ru',
+        'ru-ru': 'ru',
+        english: 'en',
+        'английский': 'en',
+        'en-us': 'en',
+        'en-gb': 'en',
+    };
+
+    if (aliases[normalized]) return aliases[normalized];
+    return normalized.includes('-') ? normalized.split('-')[0] : normalized;
+}
+
 class SttService {
     constructor() {
         this.mySttSession = null;
@@ -156,15 +177,20 @@ class SttService {
         this.theirCompletionTimer = setTimeout(() => this.flushTheirCompletion(), COMPLETION_DEBOUNCE_MS);
     }
 
-    async initializeSttSessions(language = 'en') {
-        const effectiveLanguage = process.env.OPENAI_TRANSCRIBE_LANG || language || 'en';
+    async initializeSttSessions(language = 'ru') {
+        const effectiveLanguage = normalizeSttLanguage(
+            process.env.REPGLASS_STT_LANGUAGE ||
+            process.env.OPENAI_TRANSCRIBE_LANG ||
+            language ||
+            'ru'
+        );
 
         const modelInfo = await modelStateService.getCurrentModelInfo('stt');
         if (!modelInfo || !modelInfo.apiKey) {
             throw new Error('AI model or API key is not configured.');
         }
         this.modelInfo = modelInfo;
-        console.log(`[SttService] Initializing STT for ${modelInfo.provider} using model ${modelInfo.model}`);
+        console.log(`[SttService] Initializing STT for ${modelInfo.provider} using model ${modelInfo.model}, language ${effectiveLanguage}`);
 
         const handleMyMessage = message => {
             if (!this.modelInfo) {
@@ -548,7 +574,7 @@ class SttService {
      * Gracefully tears down then recreates the STT sessions. Should be invoked
      * on a timer to avoid provider-side hard timeouts.
      */
-    async renewSessions(language = 'en') {
+    async renewSessions(language = 'ru') {
         if (!this.isSessionActive()) {
             console.warn('[SttService] renewSessions called but no active session.');
             return;

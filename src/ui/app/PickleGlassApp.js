@@ -56,7 +56,7 @@ export class PickleGlassApp extends LitElement {
         this.selectedProfile = localStorage.getItem('selectedProfile') || 'interview';
         
         // Language format migration for legacy users
-        let lang = localStorage.getItem('selectedLanguage') || 'en';
+        let lang = localStorage.getItem('selectedLanguage') || 'ru';
         if (lang.includes('-')) {
             const newLang = lang.split('-')[0];
             console.warn(`[Migration] Correcting language format from "${lang}" to "${newLang}".`);

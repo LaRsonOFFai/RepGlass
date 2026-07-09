@@ -453,6 +453,17 @@ export class SettingsView extends LitElement {
             transition: width 0.3s ease;
         }
 
+        .language-select {
+            width: 100%;
+            background: rgba(0,0,0,0.2);
+            border: 1px solid rgba(255,255,255,0.2);
+            color: white;
+            border-radius: 4px;
+            padding: 5px 8px;
+            font-size: 11px;
+            box-sizing: border-box;
+        }
+
         /* Dropdown styles */
         select.model-dropdown {
             background: rgba(0,0,0,0.2);
@@ -512,6 +523,8 @@ export class SettingsView extends LitElement {
         isSttListVisible: { type: Boolean },
         presets: { type: Array, state: true },
         selectedPreset: { type: Object, state: true },
+        selectedLanguage: { type: String },
+        onLanguageChange: { attribute: false },
         showPresets: { type: Boolean, state: true },
         autoUpdateEnabled: { type: Boolean, state: true },
         autoUpdateLoading: { type: Boolean, state: true },
@@ -544,6 +557,8 @@ export class SettingsView extends LitElement {
         this.isSttListVisible = false;
         this.presets = [];
         this.selectedPreset = null;
+        this.selectedLanguage = localStorage.getItem('selectedLanguage') || 'ru';
+        this.onLanguageChange = null;
         this.showPresets = false;
         // Ollama related
         this.ollamaStatus = { installed: false, running: false };
@@ -1199,6 +1214,13 @@ export class SettingsView extends LitElement {
         this.requestUpdate();
     }
 
+    handleLanguageChange(event) {
+        const language = event.target.value || 'ru';
+        this.selectedLanguage = language;
+        localStorage.setItem('selectedLanguage', language);
+        this.onLanguageChange?.(language);
+    }
+
     async handleSaveApiKey() {
         const input = this.shadowRoot.getElementById('api-key-input');
         if (!input || !input.value) return;
@@ -1458,6 +1480,19 @@ export class SettingsView extends LitElement {
             </div>
         `;
 
+        const languageSelectionHTML = html`
+            <div class="model-selection-section">
+                <div class="model-select-group">
+                    <label>STT Language: <strong>${this.selectedLanguage || 'ru'}</strong></label>
+                    <select class="language-select" .value=${this.selectedLanguage || 'ru'} @change=${this.handleLanguageChange}>
+                        <option value="ru">Russian</option>
+                        <option value="en">English</option>
+                        <option value="auto">Auto detect</option>
+                    </select>
+                </div>
+            </div>
+        `;
+
         return html`
             <div class="settings-container">
                 <div class="header-section">
@@ -1481,6 +1516,7 @@ export class SettingsView extends LitElement {
 
                 ${apiKeyManagementHTML}
                 ${modelSelectionHTML}
+                ${languageSelectionHTML}
 
                 <div class="buttons-section" style="border-top: 1px solid rgba(255, 255, 255, 0.1); padding-top: 6px; margin-top: 6px;">
                     <button class="settings-button full-width" @click=${this.openShortcutEditor}>

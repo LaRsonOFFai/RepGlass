@@ -366,6 +366,17 @@ export class MainHeader extends LitElement {
         }
     }
 
+    _getSelectedLanguage() {
+        const storedLanguage = localStorage.getItem('selectedLanguage') || 'ru';
+        const normalizedLanguage = storedLanguage.includes('-') ? storedLanguage.split('-')[0] : storedLanguage;
+
+        if (normalizedLanguage !== storedLanguage) {
+            localStorage.setItem('selectedLanguage', normalizedLanguage);
+        }
+
+        return normalizedLanguage || 'ru';
+    }
+
     async handleMouseDown(e) {
         e.preventDefault();
 
@@ -542,7 +553,9 @@ export class MainHeader extends LitElement {
         try {
             const listenButtonText = this._getListenButtonText(this.listenSessionStatus);
             if (window.api) {
-                await window.api.mainHeader.sendListenButtonClick(listenButtonText);
+                await window.api.mainHeader.sendListenButtonClick(listenButtonText, {
+                    language: this._getSelectedLanguage(),
+                });
             }
         } catch (error) {
             console.error('IPC invoke for session change failed:', error);

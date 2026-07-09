@@ -17,8 +17,11 @@ function normalizeRealtimeTranscriptionModel(model) {
 }
 
 function normalizeLanguage(language) {
-  if (!language || typeof language !== 'string') return 'en';
-  return language.includes('-') ? language.split('-')[0] : language;
+  if (!language || typeof language !== 'string') return 'ru';
+  const normalized = language.trim().toLowerCase();
+  if (!normalized) return 'ru';
+  if (normalized === 'auto') return undefined;
+  return normalized.includes('-') ? normalized.split('-')[0] : normalized;
 }
 
 function shouldUseResponsesApi(model) {
@@ -274,7 +277,7 @@ class OpenAIProvider {
 async function createSTT({
   apiKey,
   model = DEFAULT_REALTIME_TRANSCRIPTION_MODEL,
-  language = 'en',
+  language = 'ru',
   callbacks = {},
   usePortkey = false,
   portkeyVirtualKey,
@@ -361,7 +364,7 @@ async function createSTT({
     };
 
     ws.onopen = () => {
-      console.log(`[OpenAI STT:${sessionLabel}] Realtime transcription WebSocket opened with ${realtimeModel}.`);
+      console.log(`[OpenAI STT:${sessionLabel}] Realtime transcription WebSocket opened with ${realtimeModel}, language ${realtimeLanguage || 'auto'}.`);
 
       const sessionConfig = {
         type: 'session.update',

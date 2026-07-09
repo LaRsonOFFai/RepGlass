@@ -62,18 +62,19 @@ class ListenService {
         console.log('[ListenService] Initialized and ready.');
     }
 
-    async handleListenRequest(listenButtonText) {
+    async handleListenRequest(listenButtonText, options = {}) {
         const { windowPool } = require('../../window/windowManager');
         const listenWindow = windowPool.get('listen');
         const header = windowPool.get('header');
+        const language = typeof options === 'string' ? options : options?.language;
 
         try {
             switch (listenButtonText) {
                 case 'Listen':
-                    console.log('[ListenService] changeSession to "Listen"');
+                    console.log(`[ListenService] changeSession to "Listen" with language ${language || 'ru'}`);
                     getTrayManager().hideForCapture('listen');
                     internalBridge.emit('window:requestVisibility', { name: 'listen', visible: true });
-                    if (!await this.initializeSession()) {
+                    if (!await this.initializeSession(language)) {
                         getTrayManager().showAfterCapture('listen');
                         throw new Error('Failed to initialize listen session');
                     }
@@ -194,7 +195,7 @@ class ListenService {
         }
     }
 
-    async initializeSession(language = 'en') {
+    async initializeSession(language = 'ru') {
         if (this.isInitializingSession) {
             console.log('Session initialization already in progress.');
             return false;

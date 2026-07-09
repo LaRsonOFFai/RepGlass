@@ -15,11 +15,12 @@ if (typeof window === 'undefined') {
 }
 
 class WhisperSTTSession extends EventEmitter {
-    constructor(model, whisperService, sessionId) {
+    constructor(model, whisperService, sessionId, language = 'ru') {
         super();
         this.model = model;
         this.whisperService = whisperService;
         this.sessionId = sessionId || `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+        this.language = normalizeWhisperLanguage(language);
         this.process = null;
         this.isRunning = false;
         this.audioBuffer = Buffer.alloc(0);
@@ -159,7 +160,7 @@ class WhisperSTTSession extends EventEmitter {
                 '--no-timestamps',
                 '--output-txt',
                 '--output-json',
-                '--language', 'auto',
+                '--language', this.language,
                 '--threads', '4',
                 '--no-prints'
             ]);
@@ -279,6 +280,27 @@ class WhisperSTTSession extends EventEmitter {
     }
 }
 
+function normalizeWhisperLanguage(language) {
+    if (!language || typeof language !== 'string') return 'ru';
+
+    const normalized = language.trim().toLowerCase();
+    if (!normalized) return 'ru';
+    if (normalized === 'auto') return 'auto';
+
+    const aliases = {
+        russian: 'ru',
+        'русский': 'ru',
+        'ru-ru': 'ru',
+        english: 'en',
+        'английский': 'en',
+        'en-us': 'en',
+        'en-gb': 'en',
+    };
+
+    if (aliases[normalized]) return aliases[normalized];
+    return normalized.includes('-') ? normalized.split('-')[0] : normalized;
+}
+
 class WhisperProvider {
     static async validateApiKey() {
         // Whisper is a local service, no API key validation needed.
@@ -303,11 +325,12 @@ class WhisperProvider {
         
         const model = config.model || 'whisper-tiny';
         const sessionType = config.sessionType || 'unknown';
-        console.log(`[WhisperProvider] Creating ${sessionType} STT session with model: ${model}`);
+        const language = normalizeWhisperLanguage(config.language || process.env.REPGLASS_STT_LANGUAGE || process.env.OPENAI_TRANSCRIBE_LANG || 'ru');
+        console.log(`[WhisperProvider] Creating ${sessionType} STT session with model: ${model}, language: ${language}`);
         
         // Create unique session ID based on type
         const sessionId = `${sessionType}_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`;
-        const session = new WhisperSTTSession(model, this.whisperService, sessionId);
+        const session = new WhisperSTTSession(model, this.whisperService, sessionId, language);
         
         // Log session creation
         console.log(`[WhisperProvider] Created session: ${sessionId}`);

@@ -96,10 +96,10 @@ module.exports = {
     ipcMain.handle('listen:stopMacosSystemAudio', async () => await listenService.handleStopMacosAudio());
     ipcMain.handle('update-google-search-setting', async (event, enabled) => await listenService.handleUpdateGoogleSearchSetting(enabled));
     ipcMain.handle('listen:isSessionActive', async () => await listenService.isSessionActive());
-    ipcMain.handle('listen:changeSession', async (event, listenButtonText) => {
-      console.log('[FeatureBridge] listen:changeSession from mainheader', listenButtonText);
+    ipcMain.handle('listen:changeSession', async (event, listenButtonText, options = {}) => {
+      console.log('[FeatureBridge] listen:changeSession from mainheader', listenButtonText, options);
       try {
-        await listenService.handleListenRequest(listenButtonText);
+        await listenService.handleListenRequest(listenButtonText, options);
         return { success: true };
       } catch (error) {
         console.error('[FeatureBridge] listen:changeSession failed', error.message);
