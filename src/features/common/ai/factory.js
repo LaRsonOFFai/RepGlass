@@ -25,7 +25,7 @@ const PROVIDERS = {
           { id: 'gpt-4.1', name: 'GPT-4.1' },
       ],
       sttModels: [
-          { id: 'gpt-4o-mini-transcribe', name: 'GPT-4o Mini Transcribe' }
+          { id: 'gpt-realtime-whisper', name: 'GPT Realtime Whisper' }
       ],
   },
 
@@ -36,7 +36,7 @@ const PROVIDERS = {
           { id: 'gpt-4.1-glass', name: 'GPT-4.1 (glass)' },
       ],
       sttModels: [
-          { id: 'gpt-4o-mini-transcribe-glass', name: 'GPT-4o Mini Transcribe (glass)' }
+          { id: 'gpt-realtime-whisper-glass', name: 'GPT Realtime Whisper (glass)' }
       ],
   },
   'codex': {

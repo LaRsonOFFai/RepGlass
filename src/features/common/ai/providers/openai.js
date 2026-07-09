@@ -3,6 +3,21 @@ const WebSocket = require('ws');
 const { Readable } = require('stream');
 const { getProviderForModel } = require('../factory.js');
 
+const DEFAULT_REALTIME_TRANSCRIPTION_MODEL = 'gpt-realtime-whisper';
+const REALTIME_TRANSCRIPTION_COMMIT_BYTES = 24000 * 2;
+const REALTIME_TRANSCRIPTION_COMMIT_MS = 1000;
+
+function normalizeRealtimeTranscriptionModel(model) {
+  const normalized = typeof model === 'string' ? model.replace(/-glass$/, '') : '';
+  return normalized && normalized.startsWith('gpt-realtime-')
+    ? normalized
+    : DEFAULT_REALTIME_TRANSCRIPTION_MODEL;
+}
+
+function normalizeLanguage(language) {
+  if (!language || typeof language !== 'string') return 'en';
+  return language.includes('-') ? language.split('-')[0] : language;
+}
 
 class OpenAIProvider {
     static async validateApiKey(key) {
@@ -40,48 +55,84 @@ class OpenAIProvider {
  * @param {string} [opts.portkeyVirtualKey] - Portkey virtual key
  * @returns {Promise<object>} STT session
  */
-async function createSTT({ apiKey, language = 'en', callbacks = {}, usePortkey = false, portkeyVirtualKey, ...config }) {
+async function createSTT({
+  apiKey,
+  model = DEFAULT_REALTIME_TRANSCRIPTION_MODEL,
+  language = 'en',
+  callbacks = {},
+  usePortkey = false,
+  portkeyVirtualKey,
+  ...config
+}) {
   const keyType = usePortkey ? 'vKey' : 'apiKey';
   const key = usePortkey ? (portkeyVirtualKey || apiKey) : apiKey;
+  const realtimeModel = normalizeRealtimeTranscriptionModel(model);
+  const realtimeLanguage = normalizeLanguage(language);
 
   const wsUrl = keyType === 'apiKey'
-    ? 'wss://api.openai.com/v1/realtime?intent=transcription'
-    : 'wss://api.portkey.ai/v1/realtime?intent=transcription';
+    ? `wss://api.openai.com/v1/realtime?model=${encodeURIComponent(realtimeModel)}`
+    : `wss://api.portkey.ai/v1/realtime?model=${encodeURIComponent(realtimeModel)}`;
 
   const headers = keyType === 'apiKey'
     ? {
         'Authorization': `Bearer ${key}`,
-        'OpenAI-Beta': 'realtime=v1',
       }
     : {
         'x-portkey-api-key': 'gRv2UGRMq6GGLJ8aVEB4e7adIewu',
         'x-portkey-virtual-key': key,
-        'OpenAI-Beta': 'realtime=v1',
       };
 
   const ws = new WebSocket(wsUrl, { headers });
+  let pendingAudioBytes = 0;
+  let commitTimer = null;
+
+  const estimatePcmBytes = audioData => {
+    if (typeof audioData !== 'string') return 0;
+    const padding = audioData.endsWith('==') ? 2 : audioData.endsWith('=') ? 1 : 0;
+    return Math.max(0, Math.floor((audioData.length * 3) / 4) - padding);
+  };
+
+  const commitAudio = () => {
+    if (commitTimer) {
+      clearTimeout(commitTimer);
+      commitTimer = null;
+    }
+    if (ws.readyState !== WebSocket.OPEN || pendingAudioBytes <= 0) return;
+
+    ws.send(JSON.stringify({ type: 'input_audio_buffer.commit' }));
+    pendingAudioBytes = 0;
+  };
+
+  const scheduleCommit = () => {
+    if (pendingAudioBytes >= REALTIME_TRANSCRIPTION_COMMIT_BYTES) {
+      commitAudio();
+      return;
+    }
+    if (!commitTimer) {
+      commitTimer = setTimeout(commitAudio, REALTIME_TRANSCRIPTION_COMMIT_MS);
+    }
+  };
 
   return new Promise((resolve, reject) => {
     ws.onopen = () => {
-      console.log("WebSocket session opened.");
+      console.log(`[OpenAI STT] Realtime WebSocket opened with ${realtimeModel}.`);
 
       const sessionConfig = {
-        type: 'transcription_session.update',
+        type: 'session.update',
         session: {
-          input_audio_format: 'pcm16',
-          input_audio_transcription: {
-            model: 'gpt-4o-mini-transcribe',
-            prompt: config.prompt || '',
-            language: language || 'en'
-          },
-          turn_detection: {
-            type: 'server_vad',
-            threshold: 0.5,
-            prefix_padding_ms: 200,
-            silence_duration_ms: 100,
-          },
-          input_audio_noise_reduction: {
-            type: 'near_field'
+          type: 'transcription',
+          audio: {
+            input: {
+              format: {
+                type: 'audio/pcm',
+                rate: 24000,
+              },
+              transcription: {
+                model: realtimeModel,
+                language: realtimeLanguage,
+                delay: config.delay || 'low',
+              },
+            },
           }
         }
       };
@@ -108,11 +159,14 @@ async function createSTT({ apiKey, language = 'en', callbacks = {}, usePortkey =
               audio: audioData
             };
             ws.send(JSON.stringify(message));
+            pendingAudioBytes += estimatePcmBytes(audioData);
+            scheduleCommit();
           }
         },
         // Expose keepAlive so higher-level services can schedule heart-beats
         keepAlive,
         close: () => {
+          commitAudio();
           if (ws.readyState === WebSocket.OPEN) {
             ws.send(JSON.stringify({ type: 'session.close' }));
             ws.onmessage = ws.onerror = () => {};  // 핸들러 제거
@@ -133,6 +187,12 @@ async function createSTT({ apiKey, language = 'en', callbacks = {}, usePortkey =
       if (!msg || typeof msg !== 'object') return;
 
       msg.provider = 'openai';                // ← 항상 명시
+      if (msg.type === 'error' && msg.error) {
+        const error = new Error(msg.error.message || 'OpenAI Realtime STT error');
+        error.code = msg.error.code;
+        error.raw = msg.error;
+        callbacks.onerror?.(error);
+      }
       callbacks.onmessage?.(msg);
     };
 
@@ -145,6 +205,10 @@ async function createSTT({ apiKey, language = 'en', callbacks = {}, usePortkey =
     };
 
     ws.onclose = (event) => {
+      if (commitTimer) {
+        clearTimeout(commitTimer);
+        commitTimer = null;
+      }
       console.log(`WebSocket closed: ${event.code} ${event.reason}`);
       if (callbacks && callbacks.onclose) {
         callbacks.onclose(event);
