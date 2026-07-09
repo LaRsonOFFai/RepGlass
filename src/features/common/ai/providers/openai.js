@@ -1,6 +1,8 @@
 const OpenAI = require('openai');
 const WebSocket = require('ws');
 const { Readable } = require('stream');
+const { ReadableStream } = require('stream/web');
+const { TextDecoder, TextEncoder } = require('util');
 const { getProviderForModel } = require('../factory.js');
 
 const DEFAULT_REALTIME_TRANSCRIPTION_MODEL = 'gpt-realtime-whisper';
@@ -17,6 +19,220 @@ function normalizeRealtimeTranscriptionModel(model) {
 function normalizeLanguage(language) {
   if (!language || typeof language !== 'string') return 'en';
   return language.includes('-') ? language.split('-')[0] : language;
+}
+
+function shouldUseResponsesApi(model) {
+  return typeof model === 'string' && /^gpt-5(?:[.-]|$)/.test(model);
+}
+
+function getDefaultReasoningEffort(model) {
+  if (typeof model !== 'string' || !shouldUseResponsesApi(model)) return undefined;
+  if (model.includes('nano') || model.includes('mini')) return 'low';
+  return 'medium';
+}
+
+function getDefaultVerbosity(model) {
+  return shouldUseResponsesApi(model) ? 'low' : undefined;
+}
+
+function buildProviderHeaders({ apiKey, usePortkey = false, portkeyVirtualKey }) {
+  return usePortkey
+    ? {
+        'x-portkey-api-key': 'gRv2UGRMq6GGLJ8aVEB4e7adIewu',
+        'x-portkey-virtual-key': portkeyVirtualKey || apiKey,
+        'Content-Type': 'application/json',
+      }
+    : {
+        Authorization: `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+      };
+}
+
+function toResponsesRole(role) {
+  if (role === 'system') return 'developer';
+  if (role === 'assistant') return 'assistant';
+  return 'user';
+}
+
+function toResponsesContent(content) {
+  if (typeof content === 'string') {
+    return [{ type: 'input_text', text: content }];
+  }
+
+  if (!Array.isArray(content)) {
+    return [{ type: 'input_text', text: String(content || '') }];
+  }
+
+  return content
+    .map(part => {
+      if (part?.type === 'text') {
+        return { type: 'input_text', text: part.text || '' };
+      }
+      if (part?.type === 'image_url' && part.image_url?.url) {
+        return { type: 'input_image', image_url: part.image_url.url };
+      }
+      return null;
+    })
+    .filter(Boolean);
+}
+
+function toResponsesInput(messages) {
+  return (messages || []).map(message => ({
+    role: toResponsesRole(message.role),
+    content: toResponsesContent(message.content),
+  }));
+}
+
+function extractResponsesText(result) {
+  if (typeof result?.output_text === 'string') {
+    return result.output_text;
+  }
+
+  const chunks = [];
+  for (const item of result?.output || []) {
+    for (const content of item.content || []) {
+      if (typeof content.text === 'string') {
+        chunks.push(content.text);
+      }
+    }
+  }
+  return chunks.join('');
+}
+
+async function readErrorMessage(response, fallbackPrefix) {
+  const text = await response.text().catch(() => '');
+  try {
+    const data = JSON.parse(text);
+    return data.error?.message || `${fallbackPrefix}: ${response.status} ${response.statusText}`;
+  } catch {
+    return text || `${fallbackPrefix}: ${response.status} ${response.statusText}`;
+  }
+}
+
+function buildResponsesBody({ model, messages, maxTokens, stream, config = {} }) {
+  const body = {
+    model,
+    input: toResponsesInput(messages),
+    max_output_tokens: maxTokens,
+    stream,
+  };
+
+  const effort = config.reasoningEffort || config.reasoning?.effort || getDefaultReasoningEffort(model);
+  if (effort) {
+    body.reasoning = { effort };
+  }
+
+  const verbosity = config.verbosity || getDefaultVerbosity(model);
+  if (verbosity) {
+    body.text = { verbosity };
+  }
+
+  return body;
+}
+
+async function callResponsesApi({ apiKey, model, messages, maxTokens, usePortkey, portkeyVirtualKey, config }) {
+  const response = await fetch(usePortkey ? 'https://api.portkey.ai/v1/responses' : 'https://api.openai.com/v1/responses', {
+    method: 'POST',
+    headers: buildProviderHeaders({ apiKey, usePortkey, portkeyVirtualKey }),
+    body: JSON.stringify(buildResponsesBody({ model, messages, maxTokens, stream: false, config })),
+  });
+
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response, 'OpenAI Responses API error'));
+  }
+
+  const result = await response.json();
+  return {
+    content: extractResponsesText(result).trim(),
+    raw: result,
+  };
+}
+
+function responsesStreamToChatSse(response) {
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  const encoder = new TextEncoder();
+
+  let buffer = '';
+  let sentDone = false;
+
+  const encodeChatDelta = text => encoder.encode(`data: ${JSON.stringify({ choices: [{ delta: { content: text } }] })}\n\n`);
+  const encodeDone = () => encoder.encode('data: [DONE]\n\n');
+
+  function handleBlock(block, controller) {
+    const data = block
+      .split(/\r?\n/)
+      .filter(line => line.startsWith('data:'))
+      .map(line => line.slice(5).trimStart())
+      .join('\n');
+
+    if (!data || data === '[DONE]') return;
+
+    const event = JSON.parse(data);
+    if (event.type === 'response.output_text.delta' && event.delta) {
+      controller.enqueue(encodeChatDelta(event.delta));
+      return;
+    }
+
+    if (event.type === 'response.failed' || event.type === 'error') {
+      const message = event.error?.message || event.response?.error?.message || 'OpenAI Responses stream failed';
+      throw new Error(message);
+    }
+
+    if (event.type === 'response.completed' && !sentDone) {
+      sentDone = true;
+      controller.enqueue(encodeDone());
+    }
+  }
+
+  const body = new ReadableStream({
+    async start(controller) {
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const blocks = buffer.split(/\r?\n\r?\n/);
+          buffer = blocks.pop() || '';
+
+          for (const block of blocks) {
+            handleBlock(block, controller);
+          }
+        }
+
+        if (buffer.trim()) {
+          handleBlock(buffer, controller);
+        }
+
+        if (!sentDone) {
+          controller.enqueue(encodeDone());
+        }
+        controller.close();
+      } catch (error) {
+        controller.error(error);
+      }
+    },
+    cancel() {
+      reader.cancel().catch(() => {});
+    },
+  });
+
+  return { body };
+}
+
+async function callResponsesStreamingApi({ apiKey, model, messages, maxTokens, usePortkey, portkeyVirtualKey, config }) {
+  const response = await fetch(usePortkey ? 'https://api.portkey.ai/v1/responses' : 'https://api.openai.com/v1/responses', {
+    method: 'POST',
+    headers: buildProviderHeaders({ apiKey, usePortkey, portkeyVirtualKey }),
+    body: JSON.stringify(buildResponsesBody({ model, messages, maxTokens, stream: true, config })),
+  });
+
+  if (!response.ok) {
+    throw new Error(await readErrorMessage(response, 'OpenAI Responses API error'));
+  }
+
+  return responsesStreamToChatSse(response);
 }
 
 class OpenAIProvider {
@@ -278,6 +494,18 @@ function createLLM({ apiKey, model = 'gpt-4.1', temperature = 0.7, maxTokens = 2
   const client = new OpenAI({ apiKey });
 
   const callApi = async (messages) => {
+    if (shouldUseResponsesApi(model)) {
+      return await callResponsesApi({
+        apiKey,
+        model,
+        messages,
+        maxTokens,
+        usePortkey,
+        portkeyVirtualKey,
+        config,
+      });
+    }
+
     if (!usePortkey) {
       const response = await client.chat.completions.create({
         model: model,
@@ -373,6 +601,18 @@ function createLLM({ apiKey, model = 'gpt-4.1', temperature = 0.7, maxTokens = 2
 function createStreamingLLM({ apiKey, model = 'gpt-4.1', temperature = 0.7, maxTokens = 2048, usePortkey = false, portkeyVirtualKey, ...config }) {
   return {
     streamChat: async (messages) => {
+      if (shouldUseResponsesApi(model)) {
+        return await callResponsesStreamingApi({
+          apiKey,
+          model,
+          messages,
+          maxTokens,
+          usePortkey,
+          portkeyVirtualKey,
+          config,
+        });
+      }
+
       const fetchUrl = usePortkey
         ? 'https://api.portkey.ai/v1/chat/completions'
         : 'https://api.openai.com/v1/chat/completions';

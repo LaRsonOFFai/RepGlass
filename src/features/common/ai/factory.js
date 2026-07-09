@@ -17,13 +17,24 @@
 /**
  * @type {Object.<string, Provider>}
  */
+const OPENAI_INTERVIEW_MODELS = [
+  { id: 'gpt-5.4-mini', name: 'GPT-5.4 Mini - Interview balance ($0.75/$4.50)' },
+  { id: 'gpt-5.4-nano', name: 'GPT-5.4 Nano - Cheapest fast ($0.20/$1.25)' },
+  { id: 'gpt-5.4', name: 'GPT-5.4 - Strong coding ($2.50/$15)' },
+  { id: 'gpt-5.5', name: 'GPT-5.5 - Best coding/vision ($5/$30)' },
+  { id: 'gpt-4.1', name: 'GPT-4.1 - Legacy fallback' },
+];
+
+const OPENAI_GLASS_INTERVIEW_MODELS = OPENAI_INTERVIEW_MODELS.map(model => ({
+  id: `${model.id}-glass`,
+  name: `${model.name} (glass)`,
+}));
+
 const PROVIDERS = {
   'openai': {
       name: 'OpenAI',
       handler: () => require("./providers/openai"),
-      llmModels: [
-          { id: 'gpt-4.1', name: 'GPT-4.1' },
-      ],
+      llmModels: OPENAI_INTERVIEW_MODELS,
       sttModels: [
           { id: 'gpt-realtime-whisper', name: 'GPT Realtime Whisper' }
       ],
@@ -32,9 +43,7 @@ const PROVIDERS = {
   'openai-glass': {
       name: 'OpenAI (Glass)',
       handler: () => require("./providers/openai"),
-      llmModels: [
-          { id: 'gpt-4.1-glass', name: 'GPT-4.1 (glass)' },
-      ],
+      llmModels: OPENAI_GLASS_INTERVIEW_MODELS,
       sttModels: [
           { id: 'gpt-realtime-whisper-glass', name: 'GPT Realtime Whisper (glass)' }
       ],
