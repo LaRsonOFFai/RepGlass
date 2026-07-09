@@ -36,7 +36,7 @@ const PROVIDERS = {
       handler: () => require("./providers/openai"),
       llmModels: OPENAI_INTERVIEW_MODELS,
       sttModels: [
-          { id: 'gpt-realtime-whisper', name: 'GPT Realtime Whisper' }
+          { id: 'gpt-realtime-whisper', name: 'GPT Realtime Whisper - Fast STT' }
       ],
   },
 
@@ -45,7 +45,7 @@ const PROVIDERS = {
       handler: () => require("./providers/openai"),
       llmModels: OPENAI_GLASS_INTERVIEW_MODELS,
       sttModels: [
-          { id: 'gpt-realtime-whisper-glass', name: 'GPT Realtime Whisper (glass)' }
+          { id: 'gpt-realtime-whisper-glass', name: 'GPT Realtime Whisper - Fast STT (glass)' }
       ],
   },
   'codex': {

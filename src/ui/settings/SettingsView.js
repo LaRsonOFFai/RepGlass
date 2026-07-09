@@ -1493,6 +1493,14 @@ export class SettingsView extends LitElement {
             </div>
         `;
 
+        const codexSttNoticeHTML = this.codexStatus?.selected ? html`
+            <div class="api-key-section">
+                <div class="provider-status warning">
+                    OpenAI Codex Auth is used for answers only. For fast live transcription, save an OpenAI API key and select GPT Realtime Whisper as STT, or use Whisper Local as the slower offline option.
+                </div>
+            </div>
+        ` : '';
+
         return html`
             <div class="settings-container">
                 <div class="header-section">
@@ -1515,6 +1523,7 @@ export class SettingsView extends LitElement {
                 </div>
 
                 ${apiKeyManagementHTML}
+                ${codexSttNoticeHTML}
                 ${modelSelectionHTML}
                 ${languageSelectionHTML}
 

@@ -321,6 +321,21 @@ export class ApiKeyHeader extends LitElement {
             word-wrap: break-word;
             width: 240px;
         }
+        .helper-note {
+            width: 100%;
+            padding: 8px 10px;
+            color: rgba(255, 255, 255, 0.78);
+            background: rgba(0, 122, 255, 0.12);
+            border: 1px solid rgba(0, 122, 255, 0.26);
+            border-radius: 6px;
+            font-size: 11px;
+            line-height: 1.35;
+            -webkit-app-region: no-drag;
+        }
+        .helper-note strong {
+            color: white;
+            font-weight: 600;
+        }
     `;
 
 
@@ -455,7 +470,7 @@ export class ApiKeyHeader extends LitElement {
             // 기본 선택 값 설정
             if (llmProviders.length > 0 && !llmProviders.some(p => p.id === this.llmProvider)) this.llmProvider = llmProviders[0].id;
             if (sttProviders.length > 0 && !sttProviders.some(p => p.id === this.sttProvider)) this.sttProvider = sttProviders[0].id;
-            if (this.llmProvider === 'codex') this.selectDefaultWhisperStt();
+            if (this.llmProvider === 'codex') this.selectPreferredCodexStt({ preserveExisting: true });
 
             // Ollama 상태 및 모델 제안 로드
             if (ollamaStatus?.success) {
@@ -574,6 +589,23 @@ export class ApiKeyHeader extends LitElement {
         return true;
     }
 
+    selectPreferredCodexStt({ preserveExisting = false } = {}) {
+        const hasCurrentProvider = this.providers?.stt?.some(p => p.id === this.sttProvider);
+        if (preserveExisting && hasCurrentProvider && this.sttProvider !== 'ollama') {
+            return true;
+        }
+
+        const openaiProvider = this.providers?.stt?.find(p => p.id === 'openai');
+        if (openaiProvider) {
+            this.sttProvider = 'openai';
+            this.selectedSttModel = 'gpt-realtime-whisper';
+            this.sttError = '';
+            return true;
+        }
+
+        return this.selectDefaultWhisperStt();
+    }
+
     async handleLlmProviderChange(e, providerId) {
         const newProvider = providerId || e.target.value;
         if (newProvider === this.llmProvider) return;
@@ -588,7 +620,7 @@ export class ApiKeyHeader extends LitElement {
         if (['openai', 'gemini'].includes(this.llmProvider)) {
             this.sttProvider = this.llmProvider;
         } else if (this.llmProvider === 'codex') {
-            this.selectDefaultWhisperStt();
+            this.selectPreferredCodexStt();
         }
 
         // Reset retry state
@@ -1507,7 +1539,6 @@ export class ApiKeyHeader extends LitElement {
             const result = await window.api.apiKeyHeader.enableCodexProvider();
 
             if (result?.success) {
-                this.selectDefaultWhisperStt();
                 this.successMessage = 'OpenAI Codex connected';
                 this.messageTimestamp = Date.now();
                 return;
@@ -1550,9 +1581,6 @@ export class ApiKeyHeader extends LitElement {
                 if (!llmResult.success && llmResult.status && !llmResult.status.loggedIn) {
                     await window.api.apiKeyHeader.startCodexLogin();
                     throw new Error('OpenAI Codex login opened. Complete it, then press Confirm again.');
-                }
-                if (llmResult.success) {
-                    this.selectDefaultWhisperStt();
                 }
             } else if (this.llmProvider === 'ollama') {
                 // For Ollama ensure it's ready and validate model selection
@@ -1998,9 +2026,9 @@ export class ApiKeyHeader extends LitElement {
     render() {
         const usingCodexAuth = this.llmProvider === 'codex';
         const llmNeedsApiKey = this.llmProvider !== 'ollama' && this.llmProvider !== 'whisper' && this.llmProvider !== 'codex';
-        const sttNeedsApiKey = !usingCodexAuth && this.sttProvider !== 'ollama' && this.sttProvider !== 'whisper';
+        const sttNeedsApiKey = this.sttProvider !== 'ollama' && this.sttProvider !== 'whisper';
         const llmNeedsModel = this.llmProvider === 'ollama';
-        const sttNeedsModel = !usingCodexAuth && this.sttProvider === 'whisper';
+        const sttNeedsModel = this.sttProvider === 'whisper';
 
         const isButtonDisabled =
             this.isLoading ||
@@ -2012,6 +2040,17 @@ export class ApiKeyHeader extends LitElement {
             (sttNeedsModel && !this.selectedSttModel);
 
         const llmProviderName = this.providers.llm.find(p => p.id === this.llmProvider)?.name || this.llmProvider;
+        const sttProviderName = this.providers.stt.find(p => p.id === this.sttProvider)?.name || this.sttProvider;
+        const sttInputLabel =
+            this.sttProvider === 'whisper'
+                ? '4. Select Local STT Model'
+                : usingCodexAuth && this.sttProvider === 'openai'
+                  ? '4. OpenAI API Key for Fast STT'
+                  : '4. Enter STT API Key';
+        const sttInputPlaceholder =
+            usingCodexAuth && this.sttProvider === 'openai'
+                ? 'Enter OpenAI API key for fast transcription'
+                : `Enter your ${sttProviderName} API key`;
 
         return html`
             <div class="container">
@@ -2085,8 +2124,16 @@ export class ApiKeyHeader extends LitElement {
                             )}
                         </div>
                     </div>
+                    ${usingCodexAuth
+                        ? html`
+                              <div class="helper-note">
+                                  <strong>Codex Auth is used for answers.</strong>
+                                  Live transcription uses a separate STT provider: OpenAI is the fast realtime option, Whisper is local and slower.
+                              </div>
+                          `
+                        : ''}
                     <div class="row">
-                        <div class="label">4. Enter STT API Key</div>
+                        <div class="label">${sttInputLabel}</div>
                         ${this.sttProvider === 'ollama'
                             ? html`
                                   <div class="api-input" style="background: transparent; border: none; text-align: right; color: #a0a0a0;">
@@ -2121,7 +2168,7 @@ export class ApiKeyHeader extends LitElement {
                                         <input
                                             type="password"
                                             class="api-input ${this.sttError ? 'invalid' : ''}"
-                                            placeholder="Enter your STT API key"
+                                            placeholder=${sttInputPlaceholder}
                                             .value=${this.sttApiKey}
                                             @input=${e => {
                                                 this.sttApiKey = e.target.value;
