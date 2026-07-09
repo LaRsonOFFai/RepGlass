@@ -9,8 +9,8 @@ productName: RepGlass
 # Publish configuration for GitHub releases
 publish:
     provider: github
-    owner: pickle-com
-    repo: glass
+    owner: LaRsonOFFai
+    repo: RepGlass
     releaseType: draft
 
 # Protocols configuration for deep linking
@@ -47,10 +47,6 @@ win:
           arch: x64
     requestedExecutionLevel: asInvoker
     signAndEditExecutable: false
-    cscLink: build\certs\glass-dev.pfx
-    cscKeyPassword: "${env.CSC_KEY_PASSWORD}"
-    signtoolOptions:
-      certificateSubjectName: "RepGlass Dev Code Signing"
 
 # NSIS installer configuration for Windows
 nsis:
