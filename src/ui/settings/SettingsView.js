@@ -65,7 +65,7 @@ export class SettingsView extends LitElement {
             filter: blur(10px);
             z-index: -1;
         }
-            
+
         .settings-button[disabled],
         .api-key-section input[disabled] {
             opacity: 0.4;
@@ -397,6 +397,22 @@ export class SettingsView extends LitElement {
             width: 100%; background: rgba(0,0,0,0.2); border: 1px solid rgba(255,255,255,0.2);
             color: white; border-radius: 4px; padding: 5px 8px; font-size: 11px; box-sizing: border-box;
         }
+        .provider-status {
+            padding: 8px;
+            background: rgba(255,255,255,0.06);
+            border-radius: 4px;
+            font-size: 11px;
+            color: rgba(255,255,255,0.78);
+            line-height: 1.35;
+        }
+        .provider-status.connected {
+            background: rgba(0,255,0,0.1);
+            color: rgba(120,255,160,0.9);
+        }
+        .provider-status.warning {
+            background: rgba(255,200,0,0.1);
+            color: rgba(255,220,120,0.9);
+        }
         .key-buttons { display: flex; gap: 4px; }
         .key-buttons .settings-button { flex: 1; padding: 4px; }
         .model-list {
@@ -404,22 +420,22 @@ export class SettingsView extends LitElement {
             overflow-y: auto; background: rgba(0,0,0,0.3); border-radius: 4px;
             padding: 4px; margin-top: 4px;
         }
-        .model-item { 
-            padding: 5px 8px; 
-            font-size: 11px; 
-            border-radius: 3px; 
-            cursor: pointer; 
-            transition: background-color 0.15s; 
-            display: flex; 
-            justify-content: space-between; 
-            align-items: center; 
+        .model-item {
+            padding: 5px 8px;
+            font-size: 11px;
+            border-radius: 3px;
+            cursor: pointer;
+            transition: background-color 0.15s;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
         }
         .model-item:hover { background-color: rgba(255,255,255,0.1); }
         .model-item.selected { background-color: rgba(0, 122, 255, 0.4); font-weight: 500; }
-        .model-status { 
-            font-size: 9px; 
-            color: rgba(255,255,255,0.6); 
-            margin-left: 8px; 
+        .model-status {
+            font-size: 9px;
+            color: rgba(255,255,255,0.6);
+            margin-left: 8px;
         }
         .model-status.installed { color: rgba(0, 255, 0, 0.8); }
         .model-status.not-installed { color: rgba(255, 200, 0, 0.8); }
@@ -436,23 +452,23 @@ export class SettingsView extends LitElement {
             background: rgba(0, 122, 255, 0.8);
             transition: width 0.3s ease;
         }
-        
+
         /* Dropdown styles */
         select.model-dropdown {
             background: rgba(0,0,0,0.2);
             color: white;
             cursor: pointer;
         }
-        
+
         select.model-dropdown option {
             background: #1a1a1a;
             color: white;
         }
-        
+
         select.model-dropdown option:disabled {
             color: rgba(255,255,255,0.4);
         }
-            
+
         /* ────────────────[ GLASS BYPASS ]─────────────── */
         :host-context(body.has-glass) {
             animation: none !important;
@@ -503,6 +519,8 @@ export class SettingsView extends LitElement {
         ollamaStatus: { type: Object, state: true },
         ollamaModels: { type: Array, state: true },
         installingModels: { type: Object, state: true },
+        codexStatus: { type: Object, state: true },
+        codexChecking: { type: Boolean, state: true },
         // Whisper related properties
         whisperModels: { type: Array, state: true },
     };
@@ -513,7 +531,7 @@ export class SettingsView extends LitElement {
         //////// after_modelStateService ////////
         this.shortcuts = {};
         this.firebaseUser = null;
-        this.apiKeys = { openai: '', gemini: '', anthropic: '', whisper: '' };
+        this.apiKeys = { openai: '', gemini: '', anthropic: '', whisper: '', codex: '' };
         this.providerConfig = {};
         this.isLoading = true;
         this.isContentProtectionOn = true;
@@ -531,6 +549,8 @@ export class SettingsView extends LitElement {
         this.ollamaStatus = { installed: false, running: false };
         this.ollamaModels = [];
         this.installingModels = {}; // { modelName: progress }
+        this.codexStatus = { available: false, loggedIn: false, enabled: false, selected: false };
+        this.codexChecking = false;
         // Whisper related
         this.whisperModels = [];
         this.whisperProgressTracker = null; // Will be initialized when needed
@@ -583,7 +603,7 @@ export class SettingsView extends LitElement {
                 this.ollamaStatus = { installed: ollamaStatus.installed, running: ollamaStatus.running };
                 this.ollamaModels = ollamaStatus.models || [];
             }
-            
+
             // Load Whisper models status only if Whisper is enabled
             if (this.apiKeys?.whisper === 'local') {
                 const whisperModelsResult = await window.api.settingsView.getWhisperInstalledModels();
@@ -599,7 +619,7 @@ export class SettingsView extends LitElement {
                     }
                 }
             }
-            
+
             // Trigger UI update
             this.requestUpdate();
         } catch (error) {
@@ -613,16 +633,17 @@ export class SettingsView extends LitElement {
         this.isLoading = true;
         try {
             // Load essential data first
-            const [userState, modelSettings, presets, contentProtection, shortcuts] = await Promise.all([
+            const [userState, modelSettings, presets, contentProtection, shortcuts, codexStatus] = await Promise.all([
                 window.api.settingsView.getCurrentUser(),
                 window.api.settingsView.getModelSettings(), // Facade call
                 window.api.settingsView.getPresets(),
                 window.api.settingsView.getContentProtectionStatus(),
-                window.api.settingsView.getCurrentShortcuts()
+                window.api.settingsView.getCurrentShortcuts(),
+                window.api.settingsView.getCodexStatus().catch(() => null)
             ]);
-            
+
             if (userState && userState.isLoggedIn) this.firebaseUser = userState;
-            
+
             if (modelSettings.success) {
                 const { config, storedKeys, availableLlm, availableStt, selectedModels } = modelSettings.data;
                 this.providerConfig = config;
@@ -636,11 +657,12 @@ export class SettingsView extends LitElement {
             this.presets = presets || [];
             this.isContentProtectionOn = contentProtection;
             this.shortcuts = shortcuts || {};
+            if (codexStatus) this.codexStatus = codexStatus;
             if (this.presets.length > 0) {
                 const firstUserPreset = this.presets.find(p => p.is_default === 0);
                 if (firstUserPreset) this.selectedPreset = firstUserPreset;
             }
-            
+
             // Load LocalAI status asynchronously to improve initial load time
             this.loadLocalAIStatus();
         } catch (error) {
@@ -653,13 +675,18 @@ export class SettingsView extends LitElement {
 
     async handleSaveKey(provider) {
         const input = this.shadowRoot.querySelector(`#key-input-${provider}`);
+        if (provider === 'codex') {
+            await this.handleEnableCodex();
+            return;
+        }
+
         if (!input) return;
         const key = input.value;
-        
+
         // For Ollama, we need to ensure it's ready first
         if (provider === 'ollama') {
         this.saving = true;
-            
+
             // First ensure Ollama is installed and running
             const ensureResult = await window.api.settingsView.ensureOllamaReady();
             if (!ensureResult.success) {
@@ -667,10 +694,10 @@ export class SettingsView extends LitElement {
                 this.saving = false;
                 return;
             }
-            
+
             // Now validate (which will check if service is running)
             const result = await window.api.settingsView.validateKey({ provider, key: 'local' });
-            
+
             if (result.success) {
                 await this.refreshModelData();
                 await this.refreshOllamaStatus();
@@ -680,12 +707,12 @@ export class SettingsView extends LitElement {
             this.saving = false;
             return;
         }
-        
+
         // For Whisper, just enable it
         if (provider === 'whisper') {
             this.saving = true;
             const result = await window.api.settingsView.validateKey({ provider, key: 'local' });
-            
+
             if (result.success) {
                 await this.refreshModelData();
             } else {
@@ -694,11 +721,11 @@ export class SettingsView extends LitElement {
             this.saving = false;
             return;
         }
-        
+
         // For other providers, use the normal flow
         this.saving = true;
         const result = await window.api.settingsView.validateKey({ provider, key });
-        
+
         if (result.success) {
             await this.refreshModelData();
         } else {
@@ -707,7 +734,60 @@ export class SettingsView extends LitElement {
         }
         this.saving = false;
     }
-    
+
+    async refreshCodexStatus() {
+        if (!window.api?.settingsView?.getCodexStatus) return;
+        this.codexChecking = true;
+        this.requestUpdate();
+        try {
+            const status = await window.api.settingsView.getCodexStatus();
+            this.codexStatus = status || this.codexStatus;
+        } catch (error) {
+            console.error('[SettingsView] Failed to refresh Codex status:', error);
+            this.codexStatus = {
+                ...this.codexStatus,
+                available: false,
+                loggedIn: false,
+                error: error.message,
+            };
+        } finally {
+            this.codexChecking = false;
+            this.requestUpdate();
+        }
+    }
+
+    async handleStartCodexLogin() {
+        if (!window.api?.settingsView?.startCodexLogin) return;
+        await window.api.settingsView.startCodexLogin();
+        setTimeout(() => this.refreshCodexStatus(), 2000);
+    }
+
+    async handleEnableCodex() {
+        if (!window.api?.settingsView?.enableCodexProvider) return;
+
+        this.saving = true;
+        this.requestUpdate();
+        try {
+            const result = await window.api.settingsView.enableCodexProvider();
+            if (result?.success) {
+                this.codexStatus = result.status || this.codexStatus;
+                await this.refreshModelData();
+                return;
+            }
+
+            if (result?.status && !result.status.loggedIn) {
+                await this.handleStartCodexLogin();
+            }
+            alert(result?.error || 'Failed to enable OpenAI Codex Auth.');
+        } catch (error) {
+            console.error('[SettingsView] Failed to enable Codex:', error);
+            alert(error.message || 'Failed to enable OpenAI Codex Auth.');
+        } finally {
+            this.saving = false;
+            this.requestUpdate();
+        }
+    }
+
     async handleClearKey(provider) {
         console.log(`[SettingsView] handleClearKey: ${provider}`);
         this.saving = true;
@@ -731,14 +811,14 @@ export class SettingsView extends LitElement {
         this.apiKeys = storedKeys;
         this.requestUpdate();
     }
-    
+
     async toggleModelList(type) {
         const visibilityProp = type === 'llm' ? 'isLlmListVisible' : 'isSttListVisible';
 
         if (!this[visibilityProp]) {
             this.saving = true;
             this.requestUpdate();
-            
+
             await this.refreshModelData();
 
             this.saving = false;
@@ -748,7 +828,7 @@ export class SettingsView extends LitElement {
         this[visibilityProp] = !this[visibilityProp];
         this.requestUpdate();
     }
-    
+
     async selectModel(type, modelId) {
         // Check if this is an Ollama model that needs to be installed
         const provider = this.getProviderForModel(type, modelId);
@@ -760,18 +840,18 @@ export class SettingsView extends LitElement {
                 return;
             }
         }
-        
+
         // Check if this is a Whisper model that needs to be downloaded
         if (provider === 'whisper' && type === 'stt') {
             const isInstalling = this.installingModels[modelId] !== undefined;
             const whisperModelInfo = this.providerConfig.whisper.sttModels.find(m => m.id === modelId);
-            
+
             if (whisperModelInfo && !whisperModelInfo.installed && !isInstalling) {
                 await this.downloadWhisperModel(modelId);
                 return;
             }
         }
-        
+
         this.saving = true;
         await window.api.settingsView.setSelectedModel({ type, modelId });
         if (type === 'llm') this.selectedLlm = modelId;
@@ -781,7 +861,7 @@ export class SettingsView extends LitElement {
         this.saving = false;
         this.requestUpdate();
     }
-    
+
     async refreshOllamaStatus() {
         const ollamaStatus = await window.api.settingsView.getOllamaStatus();
         if (ollamaStatus?.success) {
@@ -789,7 +869,7 @@ export class SettingsView extends LitElement {
             this.ollamaModels = ollamaStatus.models || [];
         }
     }
-    
+
     async installOllamaModel(modelName) {
         try {
             // Ollama 모델 다운로드 시작
@@ -809,12 +889,12 @@ export class SettingsView extends LitElement {
 
             try {
                 const result = await window.api.settingsView.pullOllamaModel(modelName);
-                
+
                 if (result.success) {
                     console.log(`[SettingsView] Model ${modelName} installed successfully`);
                     delete this.installingModels[modelName];
                     this.requestUpdate();
-                    
+
                     // 상태 새로고침
                     await this.refreshOllamaStatus();
                     await this.refreshModelData();
@@ -831,12 +911,12 @@ export class SettingsView extends LitElement {
             this.requestUpdate();
         }
     }
-    
+
     async downloadWhisperModel(modelId) {
         // Mark as installing
         this.installingModels = { ...this.installingModels, [modelId]: 0 };
         this.requestUpdate();
-        
+
         try {
             // Set up progress listener - 통합 LocalAI 이벤트 사용
             const progressHandler = (event, data) => {
@@ -845,12 +925,12 @@ export class SettingsView extends LitElement {
                     this.requestUpdate();
                 }
             };
-            
+
             window.api.settingsView.onLocalAIInstallProgress(progressHandler);
-            
+
             // Start download
             const result = await window.api.settingsView.downloadWhisperModel(modelId);
-            
+
             if (result.success) {
                 // Update the model's installed status
                 if (this.providerConfig?.whisper?.sttModels) {
@@ -859,14 +939,14 @@ export class SettingsView extends LitElement {
                         modelInfo.installed = true;
                     }
                 }
-                
+
                 // Remove from installing models
                 delete this.installingModels[modelId];
                 this.requestUpdate();
-                
+
                 // Reload LocalAI status to get fresh data
                 await this.loadLocalAIStatus();
-                
+
                 // Auto-select the model after download
                 await this.selectModel('stt', modelId);
             } else {
@@ -875,7 +955,7 @@ export class SettingsView extends LitElement {
                 this.requestUpdate();
                 alert(`Failed to download Whisper model: ${result.error}`);
             }
-            
+
             // Cleanup
             window.api.settingsView.removeOnLocalAIInstallProgress(progressHandler);
         } catch (error) {
@@ -886,7 +966,7 @@ export class SettingsView extends LitElement {
             alert(`Error downloading ${modelId}: ${error.message}`);
         }
     }
-    
+
     getProviderForModel(type, modelId) {
         for (const [providerId, config] of Object.entries(this.providerConfig)) {
             const models = type === 'llm' ? config.llmModels : config.sttModels;
@@ -901,7 +981,7 @@ export class SettingsView extends LitElement {
     handleUsePicklesKey(e) {
         e.preventDefault()
         if (this.wasJustDragged) return
-    
+
         console.log("Requesting Firebase authentication from main process...")
         window.api.settingsView.startFirebaseAuth();
     }
@@ -913,7 +993,7 @@ export class SettingsView extends LitElement {
 
     connectedCallback() {
         super.connectedCallback();
-        
+
         this.setupEventListeners();
         this.setupIpcListeners();
         this.setupWindowResize();
@@ -927,7 +1007,7 @@ export class SettingsView extends LitElement {
         this.cleanupEventListeners();
         this.cleanupIpcListeners();
         this.cleanupWindowResize();
-        
+
         // Cancel any ongoing Ollama installations when component is destroyed
         const installingModels = Object.keys(this.installingModels);
         if (installingModels.length > 0) {
@@ -949,7 +1029,7 @@ export class SettingsView extends LitElement {
 
     setupIpcListeners() {
         if (!window.api) return;
-        
+
         this._userStateListener = (event, userState) => {
             console.log('[SettingsView] Received user-state-changed:', userState);
             if (userState && userState.isLoggedIn) {
@@ -961,7 +1041,7 @@ export class SettingsView extends LitElement {
             // Reload model settings when user state changes (Firebase login/logout)
             this.loadInitialData();
         };
-        
+
         this._settingsUpdatedListener = (event, settings) => {
             console.log('[SettingsView] Received settings-updated');
             this.settings = settings;
@@ -974,13 +1054,13 @@ export class SettingsView extends LitElement {
             try {
                 const presets = await window.api.settingsView.getPresets();
                 this.presets = presets || [];
-                
+
                 // 현재 선택된 프리셋이 삭제되었는지 확인 (사용자 프리셋만 고려)
                 const userPresets = this.presets.filter(p => p.is_default === 0);
                 if (this.selectedPreset && !userPresets.find(p => p.id === this.selectedPreset.id)) {
                     this.selectedPreset = userPresets.length > 0 ? userPresets[0] : null;
                 }
-                
+
                 this.requestUpdate();
             } catch (error) {
                 console.error('[SettingsView] Failed to refresh presets:', error);
@@ -990,7 +1070,7 @@ export class SettingsView extends LitElement {
             console.log('[SettingsView] Received updated shortcuts:', keybinds);
             this.shortcuts = keybinds;
         };
-        
+
         window.api.settingsView.onUserStateChanged(this._userStateListener);
         window.api.settingsView.onSettingsUpdated(this._settingsUpdatedListener);
         window.api.settingsView.onPresetsUpdated(this._presetsUpdatedListener);
@@ -999,7 +1079,7 @@ export class SettingsView extends LitElement {
 
     cleanupIpcListeners() {
         if (!window.api) return;
-        
+
         if (this._userStateListener) {
             window.api.settingsView.removeOnUserStateChanged(this._userStateListener);
         }
@@ -1020,7 +1100,7 @@ export class SettingsView extends LitElement {
             this.updateScrollHeight();
         };
         window.addEventListener('resize', this.resizeHandler);
-        
+
         // Initial setup
         setTimeout(() => this.updateScrollHeight(), 100);
     }
@@ -1067,7 +1147,7 @@ export class SettingsView extends LitElement {
 
     renderShortcutKeys(accelerator) {
         if (!accelerator) return html`N/A`;
-        
+
         const keyMap = {
             'Cmd': '⌘', 'Command': '⌘', 'Ctrl': '⌃', 'Alt': '⌥', 'Shift': '⇧', 'Enter': '↵',
             'Up': '↑', 'Down': '↓', 'Left': '←', 'Right': '→'
@@ -1114,7 +1194,7 @@ export class SettingsView extends LitElement {
     }
 
     async handleToggleInvisibility() {
-        console.log('Toggle Invisibility clicked');
+        console.log('Screen-share invisibility is locked on');
         this.isContentProtectionOn = await window.api.settingsView.toggleContentProtection();
         this.requestUpdate();
     }
@@ -1150,16 +1230,16 @@ export class SettingsView extends LitElement {
 
     async handleOllamaShutdown() {
         console.log('[SettingsView] Shutting down Ollama service...');
-        
+
         if (!window.api) return;
-        
+
         try {
             // Show loading state
             this.ollamaStatus = { ...this.ollamaStatus, running: false };
             this.requestUpdate();
-            
+
             const result = await window.api.settingsView.shutdownOllama(false); // Graceful shutdown
-            
+
             if (result.success) {
                 console.log('[SettingsView] Ollama shut down successfully');
                 // Refresh status to reflect the change
@@ -1196,6 +1276,37 @@ export class SettingsView extends LitElement {
                 ${Object.entries(this.providerConfig)
                     .filter(([id, config]) => !id.includes('-glass'))
                     .map(([id, config]) => {
+                        if (id === 'codex') {
+                            const statusText = !this.codexStatus?.available
+                                ? (this.codexStatus?.error || 'Codex CLI not found')
+                                : this.codexStatus.loggedIn
+                                  ? (this.codexStatus.method || 'Logged in with OpenAI Codex')
+                                  : 'Not signed in with OpenAI Codex';
+
+                            return html`
+                                <div class="provider-key-group">
+                                    <label>${config.name}</label>
+                                    <div class="provider-status ${this.codexStatus?.loggedIn ? 'connected' : 'warning'}">
+                                        ${statusText}
+                                        ${this.codexStatus?.selected ? html`<br>Used for answers` : ''}
+                                    </div>
+                                    <div class="key-buttons">
+                                        <button class="settings-button" @click=${this.handleStartCodexLogin} ?disabled=${this.saving || this.codexChecking}>
+                                            ${this.codexStatus?.loggedIn ? 'Refresh Login' : 'Sign in'}
+                                        </button>
+                                        <button class="settings-button" @click=${this.handleEnableCodex} ?disabled=${this.saving || this.codexChecking || !this.codexStatus?.available}>
+                                            Use for Answers
+                                        </button>
+                                    </div>
+                                    ${this.apiKeys[id] ? html`
+                                        <button class="settings-button full-width danger" @click=${() => this.handleClearKey(id)} ?disabled=${this.saving}>
+                                            Disable Codex
+                                        </button>
+                                    ` : ''}
+                                </div>
+                            `;
+                        }
+
                         if (id === 'ollama') {
                             // Special UI for Ollama
                             return html`
@@ -1226,7 +1337,7 @@ export class SettingsView extends LitElement {
                                 </div>
                             `;
                         }
-                        
+
                         if (id === 'whisper') {
                             // Simplified UI for Whisper without model selection
                             return html`
@@ -1247,13 +1358,13 @@ export class SettingsView extends LitElement {
                                 </div>
                             `;
                         }
-                        
+
                         // Regular providers
                         return html`
                         <div class="provider-key-group">
                             <label for="key-input-${id}">${config.name} API Key</label>
                             <input type="password" id="key-input-${id}"
-                                placeholder=${loggedIn ? "Using Pickle's Key" : `Enter ${config.name} API Key`} 
+                                placeholder=${loggedIn ? "Using subscription key" : `Enter ${config.name} API Key`}
                                 .value=${this.apiKeys[id] || ''}
                             >
                             <div class="key-buttons">
@@ -1265,7 +1376,7 @@ export class SettingsView extends LitElement {
                     })}
             </div>
         `;
-        
+
         const getModelName = (type, id) => {
             const models = type === 'llm' ? this.availableLlmModels : this.availableSttModels;
             const model = models.find(m => m.id === id);
@@ -1286,9 +1397,9 @@ export class SettingsView extends LitElement {
                                 const ollamaModel = isOllama ? this.ollamaModels.find(m => m.name === model.id) : null;
                                 const isInstalling = this.installingModels[model.id] !== undefined;
                                 const installProgress = this.installingModels[model.id] || 0;
-                                
+
                                 return html`
-                                    <div class="model-item ${this.selectedLlm === model.id ? 'selected' : ''}" 
+                                    <div class="model-item ${this.selectedLlm === model.id ? 'selected' : ''}"
                                          @click=${() => this.selectModel('llm', model.id)}>
                                         <span>${model.name}</span>
                                         ${isOllama ? html`
@@ -1317,14 +1428,14 @@ export class SettingsView extends LitElement {
                         <div class="model-list">
                             ${this.availableSttModels.map(model => {
                                 const isWhisper = this.getProviderForModel('stt', model.id) === 'whisper';
-                                const whisperModel = isWhisper && this.providerConfig?.whisper?.sttModels 
-                                    ? this.providerConfig.whisper.sttModels.find(m => m.id === model.id) 
+                                const whisperModel = isWhisper && this.providerConfig?.whisper?.sttModels
+                                    ? this.providerConfig.whisper.sttModels.find(m => m.id === model.id)
                                     : null;
                                 const isInstalling = this.installingModels[model.id] !== undefined;
                                 const installProgress = this.installingModels[model.id] || 0;
-                                
+
                                 return html`
-                                    <div class="model-item ${this.selectedStt === model.id ? 'selected' : ''}" 
+                                    <div class="model-item ${this.selectedStt === model.id ? 'selected' : ''}"
                                          @click=${() => this.selectModel('stt', model.id)}>
                                         <span>${model.name}</span>
                                         ${isWhisper ? html`
@@ -1351,11 +1462,13 @@ export class SettingsView extends LitElement {
             <div class="settings-container">
                 <div class="header-section">
                     <div>
-                        <h1 class="app-title">Pickle Glass</h1>
+                        <h1 class="app-title">RepGlass</h1>
                         <div class="account-info">
                             ${this.firebaseUser
                                 ? html`Account: ${this.firebaseUser.email || 'Logged In'}`
-                                : `Account: Not Logged In`
+                                : this.codexStatus?.loggedIn
+                                  ? html`Account: OpenAI Codex`
+                                  : `Account: Not Logged In`
                             }
                         </div>
                     </div>
@@ -1375,7 +1488,7 @@ export class SettingsView extends LitElement {
                     </button>
                 </div>
 
-                
+
                 <div class="shortcuts-section">
                     ${this.getMainShortcuts().map(shortcut => html`
                         <div class="shortcut-item">
@@ -1397,7 +1510,7 @@ export class SettingsView extends LitElement {
                             ${this.showPresets ? '▼' : '▶'}
                         </span>
                     </div>
-                    
+
                     <div class="preset-list ${this.showPresets ? '' : 'hidden'}">
                         ${this.presets.filter(p => p.is_default === 0).length === 0 ? html`
                             <div class="no-presets-message">
@@ -1423,7 +1536,7 @@ export class SettingsView extends LitElement {
                     <button class="settings-button full-width" @click=${this.handleToggleAutoUpdate} ?disabled=${this.autoUpdateLoading}>
                         <span>Automatic Updates: ${this.autoUpdateEnabled ? 'On' : 'Off'}</span>
                     </button>
-                    
+
                     <div class="move-buttons">
                         <button class="settings-button half-width" @click=${this.handleMoveLeft}>
                             <span>← Move</span>
@@ -1432,11 +1545,11 @@ export class SettingsView extends LitElement {
                             <span>Move →</span>
                         </button>
                     </div>
-                    
-                    <button class="settings-button full-width" @click=${this.handleToggleInvisibility}>
-                        <span>${this.isContentProtectionOn ? 'Disable Invisibility' : 'Enable Invisibility'}</span>
+
+                    <button class="settings-button full-width" @click=${this.handleToggleInvisibility} disabled>
+                        <span>Invisibility: Locked On</span>
                     </button>
-                    
+
                     <div class="bottom-buttons">
                         ${this.firebaseUser
                             ? html`
@@ -1446,7 +1559,7 @@ export class SettingsView extends LitElement {
                                 `
                             : html`
                                 <button class="settings-button half-width" @click=${this.handleUsePicklesKey}>
-                                    <span>Login</span>
+                                    <span>Login / Subscription</span>
                                 </button>
                                 `
                         }

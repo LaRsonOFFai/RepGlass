@@ -1,6 +1,5 @@
 // providers/deepgram.js
 
-const { createClient, LiveTranscriptionEvents } = require('@deepgram/sdk');
 const WebSocket = require('ws');
 
 /**

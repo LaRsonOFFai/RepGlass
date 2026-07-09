@@ -120,19 +120,29 @@ class ShortcutsService {
         console.log(`[Shortcuts] Saved keybinds.`);
     }
 
-    async toggleAllWindowsVisibility() {
-        const targetVisibility = !this.allWindowVisibility;
+    getActualWindowVisibility() {
+        const header = this.windowPool?.get('header');
+        if (!header || header.isDestroyed()) return this.allWindowVisibility;
+        return header.isVisible();
+    }
+
+    async setAllWindowsVisibility(targetVisibility) {
         internalBridge.emit('window:requestToggleAllWindowsVisibility', {
             targetVisibility: targetVisibility
         });
 
-        if (this.allWindowVisibility) {
+        if (!targetVisibility) {
             await this.registerShortcuts(true);
         } else {
             await this.registerShortcuts();
         }
 
-        this.allWindowVisibility = !this.allWindowVisibility;
+        this.allWindowVisibility = targetVisibility;
+    }
+
+    async toggleAllWindowsVisibility() {
+        const targetVisibility = !this.getActualWindowVisibility();
+        await this.setAllWindowsVisibility(targetVisibility);
     }
 
     async registerShortcuts(registerOnlyToggleVisibility = false) {
@@ -211,7 +221,20 @@ class ShortcutsService {
                     callback = () => this.toggleAllWindowsVisibility();
                     break;
                 case 'nextStep':
-                    callback = () => askService.toggleAskButton(true);
+                    callback = async () => {
+                        try {
+                            const listenService = require('../listen/listenService');
+                            const result = await listenService.answerLatestQuestionFromAudio?.();
+                            if (result?.success) {
+                                console.log(`[Shortcuts] Answering latest audio question: ${result.question}`);
+                                return;
+                            }
+                        } catch (error) {
+                            console.warn('[Shortcuts] Could not answer latest audio question:', error.message);
+                        }
+
+                        askService.toggleAskButton(true);
+                    };
                     break;
                 case 'scrollUp':
                     callback = () => {

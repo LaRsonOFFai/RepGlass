@@ -12,7 +12,9 @@ if (require('electron-squirrel-startup')) {
 }
 
 const { app, BrowserWindow, shell, ipcMain, dialog, desktopCapturer, session } = require('electron');
-const { createWindows } = require('./window/windowManager.js');
+const windowManager = require('./window/windowManager.js');
+const { createWindows } = windowManager;
+const trayManager = require('./window/trayManager');
 const listenService = require('./features/listen/listenService');
 const { initializeFirebase } = require('./features/common/services/firebaseClient');
 const databaseInitializer = require('./features/common/services/databaseInitializer');
@@ -119,11 +121,14 @@ function setupProtocolHandling() {
 }
 
 function focusMainWindow() {
-    const { windowPool } = require('./window/windowManager.js');
+    const windowManager = require('./window/windowManager.js');
+    windowManager.showMainInterface();
+    const { windowPool } = windowManager;
     if (windowPool) {
         const header = windowPool.get('header');
         if (header && !header.isDestroyed()) {
             if (header.isMinimized()) header.restore();
+            if (!header.isVisible()) header.show();
             header.focus();
             return true;
         }
@@ -220,6 +225,7 @@ app.whenReady().then(async () => {
         console.log('Web front-end listening on', WEB_PORT);
         
         createWindows();
+        trayManager.initialize();
 
     } catch (err) {
         console.error('>>> [index.js] Database initialization failed - some features may not work', err);
@@ -308,10 +314,18 @@ app.on('before-quit', async (event) => {
     }
 });
 
+app.on('window-all-closed', () => {
+    if (!isShuttingDown) {
+        console.log('[Lifecycle] All windows closed; keeping RepGlass available in the tray.');
+    }
+});
+
 app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
         createWindows();
+        trayManager.initialize();
     }
+    windowManager.showMainInterface();
 });
 
 function setupWebDataHandlers() {
@@ -481,8 +495,8 @@ async function handleCustomUrl(url) {
                 const { windowPool } = require('./window/windowManager.js');
                 const header = windowPool.get('header');
                 if (header) {
+                    focusMainWindow();
                     if (header.isMinimized()) header.restore();
-                    header.focus();
                     
                     const targetUrl = `http://localhost:${WEB_PORT}/${action}`;
                     console.log(`[Custom URL] Navigating webview to: ${targetUrl}`);
@@ -543,8 +557,8 @@ async function handleFirebaseAuthCallback(params) {
         const { windowPool } = require('./window/windowManager.js');
         const header = windowPool.get('header');
         if (header) {
+            focusMainWindow();
             if (header.isMinimized()) header.restore();
-            header.focus();
         } else {
             console.error('[Auth] Header window not found after auth callback.');
         }
@@ -568,8 +582,8 @@ function handlePersonalizeFromUrl(params) {
     const header = windowPool.get('header');
     
     if (header) {
+        focusMainWindow();
         if (header.isMinimized()) header.restore();
-        header.focus();
         
         const personalizeUrl = `http://localhost:${WEB_PORT}/settings`;
         console.log(`[Custom URL] Navigating to personalize page: ${personalizeUrl}`);

@@ -188,19 +188,19 @@ export class WelcomeHeader extends LitElement {
             <div class="container">
                 <button class="close-button" @click=${this.handleClose}>×</button>
                 <div class="header-section">
-                    <div class="title">Welcome to Glass</div>
+                    <div class="title">Welcome to RepGlass</div>
                     <div class="subtitle">Choose how to connect your AI model</div>
                 </div>
                 <div class="option-card">
                     <div class="divider"></div>
                     <div class="option-content">
-                        <div class="option-title">Quick start with default API key</div>
+                        <div class="option-title">Sign in with OpenAI Codex</div>
                         <div class="option-description">
-                            100% free with Pickle's OpenAI key<br/>No personal data collected<br/>Sign up with Google in seconds
+                            Uses your ChatGPT/Codex subscription<br/>No API key required for answers<br/>Runs through your local Codex login
                         </div>
                     </div>
                     <button class="action-button" @click=${this.loginCallback}>
-                        <div class="button-text">Open Browser to Log in</div>
+                        <div class="button-text">Connect OpenAI</div>
                         <div class="button-icon"><div class="arrow-icon"></div></div>
                     </button>
                 </div>
@@ -218,7 +218,7 @@ export class WelcomeHeader extends LitElement {
                     </button>
                 </div>
                 <div class="footer">
-                    Glass does not collect your personal data —
+                    RepGlass does not collect your personal data -
                     <span class="footer-link" @click=${this.openPrivacyPolicy}>See details</span>
                 </div>
             </div>

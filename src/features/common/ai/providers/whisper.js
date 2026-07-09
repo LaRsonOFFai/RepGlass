@@ -1,8 +1,9 @@
-let spawn, path, EventEmitter;
+let spawn, path, fs, EventEmitter;
 
 if (typeof window === 'undefined') {
     spawn = require('child_process').spawn;
     path = require('path');
+    fs = require('fs');
     EventEmitter = require('events').EventEmitter;
 } else {
     class DummyEventEmitter {
@@ -24,6 +25,7 @@ class WhisperSTTSession extends EventEmitter {
         this.audioBuffer = Buffer.alloc(0);
         this.processingInterval = null;
         this.lastTranscription = '';
+        this.sampleRate = 24000;
     }
 
     async initialize() {
@@ -41,12 +43,92 @@ class WhisperSTTSession extends EventEmitter {
 
     startProcessingLoop() {
         this.processingInterval = setInterval(async () => {
-            const minBufferSize = 16000 * 2 * 0.15;
+            const minBufferSize = this.sampleRate * 2 * 4;
             if (this.audioBuffer.length >= minBufferSize && !this.process) {
                 console.log(`[WhisperSTT-${this.sessionId}] Processing audio chunk, buffer size: ${this.audioBuffer.length}`);
                 await this.processAudioChunk();
             }
         }, 1500);
+    }
+
+    extractTextFromWhisperJson(parsed) {
+        const readText = item => {
+            if (!item) return '';
+            if (typeof item === 'string') return item;
+            if (typeof item.text === 'string') return item.text;
+            if (typeof item.transcript === 'string') return item.transcript;
+            if (typeof item.result === 'string') return item.result;
+            return '';
+        };
+
+        const directText = readText(parsed);
+        if (directText.trim()) return directText.trim();
+
+        const arrays = [parsed.transcription, parsed.segments, parsed.results];
+        for (const value of arrays) {
+            if (!Array.isArray(value)) continue;
+            const text = value.map(readText).filter(Boolean).join(' ').trim();
+            if (text) return text;
+        }
+
+        return '';
+    }
+
+    async readWhisperOutput(tempFile, stdout) {
+        const stdoutText = String(stdout || '').trim();
+        if (stdoutText) return stdoutText;
+        if (!fs) return '';
+
+        const basePath = tempFile.replace(/\.[^.\\/]+$/, '');
+        const candidates = [
+            `${tempFile}.txt`,
+            `${basePath}.txt`,
+            `${tempFile}.json`,
+            `${basePath}.json`,
+        ];
+
+        for (const candidate of candidates) {
+            try {
+                if (!fs.existsSync(candidate)) continue;
+                const raw = await fs.promises.readFile(candidate, 'utf8');
+                const trimmed = raw.trim();
+                if (!trimmed) continue;
+
+                if (candidate.endsWith('.json')) {
+                    try {
+                        const parsed = JSON.parse(trimmed);
+                        const text = this.extractTextFromWhisperJson(parsed);
+                        if (text) return text;
+                    } catch (_) {}
+                } else {
+                    return trimmed;
+                }
+            } catch (error) {
+                console.warn(`[WhisperSTT-${this.sessionId}] Failed to read output ${candidate}:`, error.message);
+            }
+        }
+
+        return '';
+    }
+
+    async cleanupWhisperOutputs(tempFile) {
+        if (!fs) return;
+
+        const basePath = tempFile.replace(/\.[^.\\/]+$/, '');
+        const candidates = [
+            `${tempFile}.txt`,
+            `${basePath}.txt`,
+            `${tempFile}.json`,
+            `${basePath}.json`,
+        ];
+
+        await Promise.all(candidates.map(async candidate => {
+            try {
+                if (fs.existsSync(candidate)) {
+                    await fs.promises.unlink(candidate);
+                }
+            } catch (_) {}
+        }));
     }
 
     async processAudioChunk() {
@@ -56,7 +138,7 @@ class WhisperSTTSession extends EventEmitter {
         this.audioBuffer = Buffer.alloc(0);
 
         try {
-            const tempFile = await this.whisperService.saveAudioToTemp(audioData, this.sessionId);
+            const tempFile = await this.whisperService.saveAudioToTemp(audioData, this.sessionId, this.sampleRate);
             
             if (!tempFile || typeof tempFile !== 'string') {
                 console.error('[WhisperSTT] Invalid temp file path:', tempFile);
@@ -79,7 +161,7 @@ class WhisperSTTSession extends EventEmitter {
                 '--output-json',
                 '--language', 'auto',
                 '--threads', '4',
-                '--print-progress', 'false'
+                '--no-prints'
             ]);
 
             let output = '';
@@ -95,9 +177,12 @@ class WhisperSTTSession extends EventEmitter {
 
             this.process.on('close', async (code) => {
                 this.process = null;
-                
-                if (code === 0 && output.trim()) {
-                    const transcription = output.trim();
+
+                const transcription = code === 0
+                    ? await this.readWhisperOutput(tempFile, output)
+                    : '';
+
+                if (code === 0 && transcription) {
                     if (transcription && transcription !== this.lastTranscription) {
                         this.lastTranscription = transcription;
                         console.log(`[WhisperSTT-${this.sessionId}] Transcription: "${transcription}"`);
@@ -108,10 +193,21 @@ class WhisperSTTSession extends EventEmitter {
                             sessionId: this.sessionId
                         });
                     }
-                } else if (errorOutput) {
-                    console.error(`[WhisperSTT-${this.sessionId}] Process error:`, errorOutput);
+                } else if (code === 0) {
+                    console.log(`[WhisperSTT-${this.sessionId}] No transcription produced for chunk (${audioData.length} bytes at ${this.sampleRate} Hz).`);
+                    if (errorOutput.trim()) {
+                        console.log(`[WhisperSTT-${this.sessionId}] Whisper stderr: ${errorOutput.trim().slice(-1000)}`);
+                    }
+                } else if (!this.isRunning && code === null) {
+                    console.log(`[WhisperSTT-${this.sessionId}] Whisper process stopped during session shutdown.`);
+                } else {
+                    console.error(`[WhisperSTT-${this.sessionId}] Process exited with code ${code || 'unknown'} while processing ${audioData.length} bytes at ${this.sampleRate} Hz.`);
+                    if (errorOutput.trim()) {
+                        console.error(`[WhisperSTT-${this.sessionId}] Process error:`, errorOutput.trim().slice(-2000));
+                    }
                 }
 
+                await this.cleanupWhisperOutputs(tempFile);
                 await this.whisperService.cleanupTempFile(tempFile);
             });
 
@@ -121,10 +217,21 @@ class WhisperSTTSession extends EventEmitter {
         }
     }
 
+    parseSampleRate(mimeType) {
+        const match = String(mimeType || '').match(/rate=(\d+)/i);
+        return match ? Number(match[1]) : null;
+    }
+
     sendRealtimeInput(audioData) {
         if (!this.isRunning) {
             console.warn(`[WhisperSTT-${this.sessionId}] Session not running, cannot accept audio`);
             return;
+        }
+
+        if (audioData && typeof audioData === 'object' && !Buffer.isBuffer(audioData) && !(audioData instanceof ArrayBuffer) && !(audioData instanceof Uint8Array)) {
+            const rate = this.parseSampleRate(audioData.mimeType);
+            if (rate) this.sampleRate = rate;
+            audioData = audioData.data;
         }
 
         if (typeof audioData === 'string') {

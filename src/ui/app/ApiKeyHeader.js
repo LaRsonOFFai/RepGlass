@@ -399,6 +399,7 @@ export class ApiKeyHeader extends LitElement {
         this.handleMessageFadeEnd = this.handleMessageFadeEnd.bind(this);
         this.handleModelKeyPress = this.handleModelKeyPress.bind(this);
         this.handleSttModelChange = this.handleSttModelChange.bind(this);
+        this.handleCodexAuthClick = this.handleCodexAuthClick.bind(this);
         this.handleBack = this.handleBack.bind(this);
         this.handleClose = this.handleClose.bind(this);
     }
@@ -452,8 +453,9 @@ export class ApiKeyHeader extends LitElement {
             this.providers = { llm: llmProviders, stt: sttProviders };
 
             // 기본 선택 값 설정
-            if (llmProviders.length > 0) this.llmProvider = llmProviders[0].id;
-            if (sttProviders.length > 0) this.sttProvider = sttProviders[0].id;
+            if (llmProviders.length > 0 && !llmProviders.some(p => p.id === this.llmProvider)) this.llmProvider = llmProviders[0].id;
+            if (sttProviders.length > 0 && !sttProviders.some(p => p.id === this.sttProvider)) this.sttProvider = sttProviders[0].id;
+            if (this.llmProvider === 'codex') this.selectDefaultWhisperStt();
 
             // Ollama 상태 및 모델 제안 로드
             if (ollamaStatus?.success) {
@@ -559,6 +561,19 @@ export class ApiKeyHeader extends LitElement {
         this.requestUpdate();
     }
 
+    selectDefaultWhisperStt() {
+        const whisperProvider = this.providers?.stt?.find(p => p.id === 'whisper');
+        if (!whisperProvider) return false;
+
+        this.sttProvider = 'whisper';
+        if (!this.selectedSttModel) {
+            this.selectedSttModel = 'whisper-base';
+        }
+        this.sttApiKey = '';
+        this.sttError = '';
+        return true;
+    }
+
     async handleLlmProviderChange(e, providerId) {
         const newProvider = providerId || e.target.value;
         if (newProvider === this.llmProvider) return;
@@ -572,6 +587,8 @@ export class ApiKeyHeader extends LitElement {
 
         if (['openai', 'gemini'].includes(this.llmProvider)) {
             this.sttProvider = this.llmProvider;
+        } else if (this.llmProvider === 'codex') {
+            this.selectDefaultWhisperStt();
         }
 
         // Reset retry state
@@ -805,9 +822,7 @@ export class ApiKeyHeader extends LitElement {
             this.messageTimestamp = Date.now();
 
             // Auto-select Whisper if available
-            const whisperProvider = this.providers.stt.find(p => p.id === 'whisper');
-            if (whisperProvider) {
-                this.sttProvider = 'whisper';
+            if (this.selectDefaultWhisperStt()) {
                 console.log('[ApiKeyHeader] Auto-selected Whisper for STT');
             }
         }
@@ -1474,6 +1489,45 @@ export class ApiKeyHeader extends LitElement {
         this.requestUpdate();
     }
 
+    async handleCodexAuthClick(e) {
+        e?.preventDefault();
+        e?.stopPropagation();
+
+        if (!window.api?.apiKeyHeader) {
+            this.llmError = '*API bridge not available';
+            this.requestUpdate();
+            return;
+        }
+
+        this.isLoading = true;
+        this.clearMessages();
+        this.requestUpdate();
+
+        try {
+            const result = await window.api.apiKeyHeader.enableCodexProvider();
+
+            if (result?.success) {
+                this.selectDefaultWhisperStt();
+                this.successMessage = 'OpenAI Codex connected';
+                this.messageTimestamp = Date.now();
+                return;
+            }
+
+            if (result?.status && !result.status.loggedIn) {
+                await window.api.apiKeyHeader.startCodexLogin();
+                this.llmError = '*Codex login opened. Complete it, then press this button again.';
+            } else {
+                this.llmError = `*${result?.error || 'Could not connect OpenAI Codex'}`;
+            }
+        } catch (error) {
+            console.error('[ApiKeyHeader] Codex auth click failed:', error);
+            this.llmError = `*${error.message || 'Could not connect OpenAI Codex'}`;
+        } finally {
+            this.isLoading = false;
+            this.requestUpdate();
+        }
+    }
+
     async handleSubmit() {
         console.log('[ApiKeyHeader] handleSubmit: Submitting...');
 
@@ -1491,7 +1545,16 @@ export class ApiKeyHeader extends LitElement {
         try {
             // Handle LLM provider
             let llmResult;
-            if (this.llmProvider === 'ollama') {
+            if (this.llmProvider === 'codex') {
+                llmResult = await window.api.apiKeyHeader.enableCodexProvider();
+                if (!llmResult.success && llmResult.status && !llmResult.status.loggedIn) {
+                    await window.api.apiKeyHeader.startCodexLogin();
+                    throw new Error('OpenAI Codex login opened. Complete it, then press Confirm again.');
+                }
+                if (llmResult.success) {
+                    this.selectDefaultWhisperStt();
+                }
+            } else if (this.llmProvider === 'ollama') {
                 // For Ollama ensure it's ready and validate model selection
                 if (!this.selectedLlmModel?.trim()) {
                     throw new Error('Please enter an Ollama model name');
@@ -1753,6 +1816,20 @@ export class ApiKeyHeader extends LitElement {
     /**
      * State machine-based Ollama UI rendering
      */
+    _renderCodexStateUI() {
+        return html`
+            <button
+                type="button"
+                class="ollama-action-button install"
+                style="background: rgba(0,122,255,0.18); border: 1px solid rgba(0,122,255,0.38);"
+                @click=${this.handleCodexAuthClick}
+                ?disabled=${this.isLoading}
+            >
+                ${this.isLoading ? 'Checking OpenAI Codex...' : 'Use your OpenAI Codex login'}
+            </button>
+        `;
+    }
+
     _renderOllamaStateUI() {
         const state = this._getOllamaUIState();
 
@@ -1919,10 +1996,11 @@ export class ApiKeyHeader extends LitElement {
     }
 
     render() {
-        const llmNeedsApiKey = this.llmProvider !== 'ollama' && this.llmProvider !== 'whisper';
-        const sttNeedsApiKey = this.sttProvider !== 'ollama' && this.sttProvider !== 'whisper';
+        const usingCodexAuth = this.llmProvider === 'codex';
+        const llmNeedsApiKey = this.llmProvider !== 'ollama' && this.llmProvider !== 'whisper' && this.llmProvider !== 'codex';
+        const sttNeedsApiKey = !usingCodexAuth && this.sttProvider !== 'ollama' && this.sttProvider !== 'whisper';
         const llmNeedsModel = this.llmProvider === 'ollama';
-        const sttNeedsModel = this.sttProvider === 'whisper';
+        const sttNeedsModel = !usingCodexAuth && this.sttProvider === 'whisper';
 
         const isButtonDisabled =
             this.isLoading ||
@@ -1965,8 +2043,10 @@ export class ApiKeyHeader extends LitElement {
                         </div>
                     </div>
                     <div class="row">
-                        <div class="label">2. Enter API Key</div>
-                        ${this.llmProvider === 'ollama'
+                        <div class="label">${this.llmProvider === 'codex' ? '2. OpenAI Login' : '2. Enter API Key'}</div>
+                        ${this.llmProvider === 'codex'
+                            ? this._renderCodexStateUI()
+                            : this.llmProvider === 'ollama'
                             ? this._renderOllamaStateUI()
                             : html`
                                   <div class="input-wrapper">

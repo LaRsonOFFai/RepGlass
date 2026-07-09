@@ -16,6 +16,9 @@ contextBridge.exposeInMainWorld('api', {
     getCurrentUser: () => ipcRenderer.invoke('get-current-user'),
     startFirebaseAuth: () => ipcRenderer.invoke('start-firebase-auth'),
     firebaseLogout: () => ipcRenderer.invoke('firebase-logout'),
+    getCodexStatus: () => ipcRenderer.invoke('codex:get-status'),
+    startCodexLogin: () => ipcRenderer.invoke('codex:start-login'),
+    enableCodexProvider: () => ipcRenderer.invoke('codex:enable-provider'),
     
     // App Control
       quitApplication: () => ipcRenderer.invoke('quit-application'),
@@ -50,6 +53,9 @@ contextBridge.exposeInMainWorld('api', {
     validateKey: (data) => ipcRenderer.invoke('model:validate-key', data),
     setSelectedModel: (data) => ipcRenderer.invoke('model:set-selected-model', data),
     areProvidersConfigured: () => ipcRenderer.invoke('model:are-providers-configured'),
+    getCodexStatus: () => ipcRenderer.invoke('codex:get-status'),
+    startCodexLogin: () => ipcRenderer.invoke('codex:start-login'),
+    enableCodexProvider: () => ipcRenderer.invoke('codex:enable-provider'),
     
     // Window Management
     getHeaderPosition: () => ipcRenderer.invoke('get-header-position'),
@@ -205,6 +211,9 @@ contextBridge.exposeInMainWorld('api', {
     openPersonalizePage: () => ipcRenderer.invoke('open-personalize-page'),
     firebaseLogout: () => ipcRenderer.invoke('firebase-logout'),
     startFirebaseAuth: () => ipcRenderer.invoke('start-firebase-auth'),
+    getCodexStatus: () => ipcRenderer.invoke('codex:get-status'),
+    startCodexLogin: () => ipcRenderer.invoke('codex:start-login'),
+    enableCodexProvider: () => ipcRenderer.invoke('codex:enable-provider'),
 
     // Model & Provider Management
     getModelSettings: () => ipcRenderer.invoke('settings:get-model-settings'), // Facade call

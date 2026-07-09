@@ -1,12 +1,13 @@
 {
-    "name": "pickle-glass",
-    "productName": "Glass",
+    "name": "repglass",
+    "productName": "RepGlass",
     "version": "0.2.4",
-    "description": "Cl*ely for Free",
+    "description": "A translucent OpenAI Codex-powered live assistant",
     "main": "src/index.js",
     "scripts": {
         "setup": "npm install && cd pickleglass_web && npm install && npm run build && cd .. && npm start",
         "start": "npm run build:renderer && electron .",
+        "start:hidden": "wscript Start-RepGlass-hidden.vbs",
         "package": "npm run build:all && electron-builder --dir",
         "make": "npm run build:renderer && electron-forge make",
         "build": "npm run build:all && electron-builder --config electron-builder.yml --publish never",
@@ -28,45 +29,53 @@
         "contextual ai"
     ],
     "author": {
-        "name": "Pickle Team"
+        "name": "RepGlass"
     },
     "license": "GPL-3.0",
+    "engines": {
+        "node": ">=24.0.0",
+        "npm": ">=11.0.0"
+    },
+    "packageManager": "npm@11.12.1",
     "dependencies": {
-        "@anthropic-ai/sdk": "^0.56.0",
-        "@deepgram/sdk": "^4.9.1",
-        "@google/genai": "^1.8.0",
+        "@anthropic-ai/sdk": "^0.110.0",
+        "@google/genai": "^2.10.0",
         "@google/generative-ai": "^0.24.1",
-        "axios": "^1.10.0",
-        "better-sqlite3": "^9.6.0",
-        "cors": "^2.8.5",
-        "dotenv": "^17.0.0",
+        "axios": "^1.18.1",
+        "better-sqlite3": "^12.11.1",
+        "cors": "^2.8.6",
+        "dotenv": "^17.4.2",
         "electron-squirrel-startup": "^1.0.1",
         "electron-store": "^8.2.0",
-        "electron-updater": "^6.6.2",
-        "express": "^4.18.2",
-        "firebase": "^11.10.0",
-        "firebase-admin": "^13.4.0",
-        "jsonwebtoken": "^9.0.2",
+        "electron-updater": "^6.8.9",
+        "express": "^4.22.2",
+        "firebase": "^12.15.0",
+        "firebase-admin": "^14.1.0",
+        "jsonwebtoken": "^9.0.3",
         "keytar": "^7.9.0",
         "node-fetch": "^2.7.0",
-        "openai": "^4.70.0",
-        "portkey-ai": "^1.10.1",
-        "react-hot-toast": "^2.5.2",
-        "sharp": "^0.34.2",
-        "validator": "^13.11.0",
-        "wait-on": "^8.0.3",
-        "ws": "^8.18.0"
+        "openai": "^6.45.0",
+        "react-hot-toast": "^2.6.0",
+        "sharp": "^0.35.3",
+        "validator": "^13.15.35",
+        "wait-on": "^9.0.10",
+        "ws": "^8.21.0"
     },
     "devDependencies": {
-        "@electron/fuses": "^1.8.0",
-        "@electron/notarize": "^2.5.0",
-        "electron": "^30.5.1",
-        "electron-builder": "^26.0.12",
+        "@electron/fuses": "^2.1.3",
+        "@electron/notarize": "^3.1.1",
+        "electron": "^43.0.0",
+        "electron-builder": "^26.15.3",
         "electron-reloader": "^1.2.3",
-        "esbuild": "^0.25.5",
-        "prettier": "^3.6.2"
+        "esbuild": "^0.28.1",
+        "prettier": "^3.9.4"
     },
     "optionalDependencies": {
         "electron-liquid-glass": "^1.0.1"
+    },
+    "overrides": {
+        "gaxios": "^7.1.5",
+        "retry-request": "^8.0.3",
+        "teeny-request": "^10.1.3"
     }
 }

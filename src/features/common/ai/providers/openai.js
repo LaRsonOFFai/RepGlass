@@ -1,6 +1,5 @@
 const OpenAI = require('openai');
 const WebSocket = require('ws');
-const { Portkey } = require('portkey-ai');
 const { Readable } = require('stream');
 const { getProviderForModel } = require('../factory.js');
 
@@ -86,7 +85,7 @@ async function createSTT({ apiKey, language = 'en', callbacks = {}, usePortkey =
           }
         }
       };
-      
+
       ws.send(JSON.stringify(sessionConfig));
 
       // Helper to periodically keep the websocket alive
@@ -167,7 +166,7 @@ async function createSTT({ apiKey, language = 'en', callbacks = {}, usePortkey =
  */
 function createLLM({ apiKey, model = 'gpt-4.1', temperature = 0.7, maxTokens = 2048, usePortkey = false, portkeyVirtualKey, ...config }) {
   const client = new OpenAI({ apiKey });
-  
+
   const callApi = async (messages) => {
     if (!usePortkey) {
       const response = await client.chat.completions.create({
@@ -214,7 +213,7 @@ function createLLM({ apiKey, model = 'gpt-4.1', temperature = 0.7, maxTokens = 2
       const messages = [];
       let systemPrompt = '';
       let userContent = [];
-      
+
       for (const part of parts) {
         if (typeof part === 'string') {
           if (systemPrompt === '' && part.includes('You are')) {
@@ -229,10 +228,10 @@ function createLLM({ apiKey, model = 'gpt-4.1', temperature = 0.7, maxTokens = 2
           });
         }
       }
-      
+
       if (systemPrompt) messages.push({ role: 'system', content: systemPrompt });
       if (userContent.length > 0) messages.push({ role: 'user', content: userContent });
-      
+
       const result = await callApi(messages);
 
       return {
@@ -242,7 +241,7 @@ function createLLM({ apiKey, model = 'gpt-4.1', temperature = 0.7, maxTokens = 2
         raw: result.raw
       };
     },
-    
+
     // For compatibility with chat-style interfaces
     chat: async (messages) => {
       return await callApi(messages);
@@ -250,7 +249,7 @@ function createLLM({ apiKey, model = 'gpt-4.1', temperature = 0.7, maxTokens = 2
   };
 }
 
-/** 
+/**
  * Creates an OpenAI streaming LLM instance
  * @param {object} opts - Configuration options
  * @param {string} opts.apiKey - OpenAI API key
@@ -264,10 +263,10 @@ function createLLM({ apiKey, model = 'gpt-4.1', temperature = 0.7, maxTokens = 2
 function createStreamingLLM({ apiKey, model = 'gpt-4.1', temperature = 0.7, maxTokens = 2048, usePortkey = false, portkeyVirtualKey, ...config }) {
   return {
     streamChat: async (messages) => {
-      const fetchUrl = usePortkey 
+      const fetchUrl = usePortkey
         ? 'https://api.portkey.ai/v1/chat/completions'
         : 'https://api.openai.com/v1/chat/completions';
-      
+
       const headers = usePortkey
         ? {
             'x-portkey-api-key': 'gRv2UGRMq6GGLJ8aVEB4e7adIewu',
@@ -305,4 +304,4 @@ module.exports = {
     createSTT,
     createLLM,
     createStreamingLLM
-}; 
+};

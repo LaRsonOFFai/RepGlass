@@ -39,7 +39,7 @@ const DOWNLOAD_CHECKSUMS = {
                     sha256: null // TODO: 실제 체크섬 추가 필요 - null일 경우 체크섬 검증 스킵됨
                 },
                 windows: {
-                    url: 'https://github.com/ggml-org/whisper.cpp/releases/download/v1.7.6/whisper-cpp-v1.7.6-win-x64.zip',
+                    url: 'https://github.com/ggml-org/whisper.cpp/releases/download/v1.7.6/whisper-bin-x64.zip',
                     sha256: null // TODO: 실제 체크섬 추가 필요 - null일 경우 체크섬 검증 스킵됨
                 },
                 linux: {

@@ -39,6 +39,14 @@ const PROVIDERS = {
           { id: 'gpt-4o-mini-transcribe-glass', name: 'GPT-4o Mini Transcribe (glass)' }
       ],
   },
+  'codex': {
+      name: 'OpenAI Codex Auth',
+      handler: () => require("./providers/codex"),
+      llmModels: [
+          { id: process.env.OPENAI_CODEX_MODEL || 'gpt-5.5', name: `Codex ${process.env.OPENAI_CODEX_MODEL || 'GPT-5.5'}` },
+      ],
+      sttModels: [],
+  },
   'gemini': {
       name: 'Gemini',
       handler: () => require("./providers/gemini"),
@@ -156,6 +164,7 @@ function getProviderClass(providerId) {
         'openai': 'OpenAIProvider',
         'anthropic': 'AnthropicProvider',
         'gemini': 'GeminiProvider',
+        'codex': 'CodexProvider',
         'deepgram': 'DeepgramProvider',
         'ollama': 'OllamaProvider',
         'whisper': 'WhisperProvider'

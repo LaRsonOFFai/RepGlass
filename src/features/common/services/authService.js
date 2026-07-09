@@ -8,31 +8,60 @@ const sessionRepository = require('../repositories/session');
 const providerSettingsRepository = require('../repositories/providerSettings');
 const permissionService = require('./permissionService');
 
-async function getVirtualKeyByEmail(email, idToken) {
+const DEFAULT_SUBSCRIPTION_GATEWAY_URL = 'https://serverless-api-sf3o.vercel.app/api/virtual_key';
+
+function getSubscriptionGatewayUrl() {
+    return process.env.PICKLE_SUBSCRIPTION_GATEWAY_URL ||
+        process.env.PICKLE_OPENAI_GATEWAY_URL ||
+        DEFAULT_SUBSCRIPTION_GATEWAY_URL;
+}
+
+function normalizeSubscriptionResponse(json) {
+    const data = json?.data || json || {};
+    return {
+        virtualKey: data.virtualKey || data.virtual_key || data.newVKey?.slug,
+        status: data.subscriptionStatus || data.subscription_status || data.status || 'active',
+        plan: data.plan || data.tier || null,
+        provider: data.provider || 'openai',
+    };
+}
+
+async function getSubscriptionVirtualKey(user, idToken) {
     if (!idToken) {
-        throw new Error('Firebase ID token is required for virtual key request');
+        throw new Error('Firebase ID token is required for subscription gateway request');
+    }
+    if (!user?.email) {
+        throw new Error('Firebase user email is required for subscription gateway request');
     }
 
-    const resp = await fetch('https://serverless-api-sf3o.vercel.app/api/virtual_key', {
+    const gatewayUrl = getSubscriptionGatewayUrl();
+    const resp = await fetch(gatewayUrl, {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
             Authorization: `Bearer ${idToken}`,
         },
-        body: JSON.stringify({ email: email.trim().toLowerCase() }),
+        body: JSON.stringify({
+            uid: user.uid,
+            email: user.email.trim().toLowerCase(),
+            provider: 'openai',
+            product: 'glass-desktop',
+        }),
         redirect: 'follow',
     });
 
     const json = await resp.json().catch(() => ({}));
     if (!resp.ok) {
-        console.error('[VK] API request failed:', json.message || 'Unknown error');
-        throw new Error(json.message || `HTTP ${resp.status}: Virtual key request failed`);
+        console.error('[SubscriptionGateway] API request failed:', json.message || json.error || 'Unknown error');
+        throw new Error(json.message || json.error || `HTTP ${resp.status}: Subscription gateway request failed`);
     }
 
-    const vKey = json?.data?.virtualKey || json?.data?.virtual_key || json?.data?.newVKey?.slug;
+    const subscription = normalizeSubscriptionResponse(json);
 
-    if (!vKey) throw new Error('virtual key missing in response');
-    return vKey;
+    if (!subscription.virtualKey) {
+        throw new Error('Subscription gateway did not return a virtual OpenAI key');
+    }
+    return subscription;
 }
 
 class AuthService {
@@ -40,6 +69,12 @@ class AuthService {
         this.currentUserId = 'default_user';
         this.currentUserMode = 'local'; // 'local' or 'firebase'
         this.currentUser = null;
+        this.subscriptionState = {
+            status: 'local',
+            plan: null,
+            provider: null,
+            hasManagedOpenAI: false,
+        };
         this.isInitialized = false;
 
         // This ensures the key is ready before any login/logout state change.
@@ -80,16 +115,29 @@ class AuthService {
                     // ***** CRITICAL: Wait for the virtual key and model state update to complete *****
                     try {
                         const idToken = await user.getIdToken(true);
-                        const virtualKey = await getVirtualKeyByEmail(user.email, idToken);
+                        const subscription = await getSubscriptionVirtualKey(user, idToken);
 
                         if (global.modelStateService) {
                             // The model state service now writes directly to the DB, no in-memory state.
-                            await global.modelStateService.setFirebaseVirtualKey(virtualKey);
+                            await global.modelStateService.setFirebaseVirtualKey(subscription.virtualKey);
                         }
-                        console.log(`[AuthService] Virtual key for ${user.email} has been processed and state updated.`);
+                        this.subscriptionState = {
+                            status: subscription.status,
+                            plan: subscription.plan,
+                            provider: subscription.provider,
+                            hasManagedOpenAI: true,
+                        };
+                        console.log(`[AuthService] Managed OpenAI subscription for ${user.email} has been processed.`);
 
                     } catch (error) {
-                        console.error('[AuthService] Failed to fetch or save virtual key:', error);
+                        console.error('[AuthService] Failed to fetch or save subscription OpenAI key:', error);
+                        this.subscriptionState = {
+                            status: 'unavailable',
+                            plan: null,
+                            provider: 'openai',
+                            hasManagedOpenAI: false,
+                            error: error.message,
+                        };
                         // This is not critical enough to halt the login, but we should log it.
                     }
 
@@ -106,6 +154,12 @@ class AuthService {
                     this.currentUser = null;
                     this.currentUserId = 'default_user';
                     this.currentUserMode = 'local';
+                    this.subscriptionState = {
+                        status: 'local',
+                        plan: null,
+                        provider: null,
+                        hasManagedOpenAI: false,
+                    };
 
                     // End active sessions for the local/default user as well.
                     await sessionRepository.endAllActiveSessions();
@@ -113,7 +167,7 @@ class AuthService {
                     encryptionService.resetSessionKey();
                 }
                 this.broadcastUserState();
-                
+
                 if (!this.isInitialized) {
                     this.isInitialized = true;
                     console.log('[AuthService] Initialized and resolved initialization promise.');
@@ -164,7 +218,7 @@ class AuthService {
             console.error('[AuthService] Error signing out:', error);
         }
     }
-    
+
     broadcastUserState() {
         const userState = this.getCurrentUser();
         console.log('[AuthService] Broadcasting user state change:', userState);
@@ -189,6 +243,7 @@ class AuthService {
                 displayName: this.currentUser.displayName,
                 mode: 'firebase',
                 isLoggedIn: true,
+                subscription: this.subscriptionState,
                 //////// before_modelStateService ////////
                 // hasApiKey: this.hasApiKey // Always true for firebase users, but good practice
                 //////// before_modelStateService ////////
@@ -200,6 +255,7 @@ class AuthService {
             displayName: 'Default User',
             mode: 'local',
             isLoggedIn: false,
+            subscription: this.subscriptionState,
             //////// before_modelStateService ////////
             // hasApiKey: this.hasApiKey
             //////// before_modelStateService ////////
@@ -208,4 +264,4 @@ class AuthService {
 }
 
 const authService = new AuthService();
-module.exports = authService; 
+module.exports = authService;

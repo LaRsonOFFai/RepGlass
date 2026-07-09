@@ -5,6 +5,7 @@ const encryptionService = require('./encryptionService');
 const providerSettingsRepository = require('../repositories/providerSettings');
 const authService = require('./authService');
 const ollamaModelRepository = require('../repositories/ollamaModel');
+const codexAuthService = require('./codexAuthService');
 
 class ModelStateService extends EventEmitter {
     constructor() {
@@ -18,6 +19,7 @@ class ModelStateService extends EventEmitter {
         console.log('[ModelStateService] Initializing one-time setup...');
         await this._initializeEncryption();
         await this._runMigrations();
+        await this._applyEnvironmentApiKeys();
         this.setupLocalAIStateSync();
         await this._autoSelectAvailableModels([], true);
         console.log('[ModelStateService] One-time setup complete.');
@@ -93,6 +95,26 @@ class ModelStateService extends EventEmitter {
             console.error('[ModelStateService] electron-store migration failed:', error);
         }
     }
+
+    async _applyEnvironmentApiKeys() {
+        const mappings = [
+            { provider: 'openai', envNames: ['OPENAI_API_KEY', 'PICKLE_OPENAI_API_KEY'] },
+        ];
+
+        for (const { provider, envNames } of mappings) {
+            const envKey = envNames.map(name => process.env[name]).find(value => value && value.trim());
+            if (!envKey || !PROVIDERS[provider]) continue;
+
+            const existingSettings = await providerSettingsRepository.getByProvider(provider);
+            if (existingSettings?.api_key) continue;
+
+            await providerSettingsRepository.upsert(provider, {
+                ...existingSettings,
+                api_key: envKey.trim(),
+            });
+            console.log(`[ModelStateService] Loaded ${provider} API key from environment.`);
+        }
+    }
     
     setupLocalAIStateSync() {
         const localAIManager = require('./localAIManager');
@@ -136,18 +158,27 @@ class ModelStateService extends EventEmitter {
             const currentModelId = selectedModels[type];
             let isCurrentModelValid = false;
             const forceReselection = forceReselectionForTypes.includes(type);
+            let availableModels = null;
 
-            if (currentModelId && !forceReselection) {
+            if (currentModelId) {
                 const provider = this.getProviderForModel(currentModelId, type);
                 const apiKey = apiKeys[provider];
                 if (provider && apiKey) {
-                    isCurrentModelValid = true;
+                    if (forceReselection) {
+                        availableModels = await this.getAvailableModels(type);
+                        isCurrentModelValid = availableModels.some(model => model.id === currentModelId);
+                        if (isCurrentModelValid) {
+                            console.log(`[ModelStateService] Keeping current ${type.toUpperCase()} model after availability refresh: ${currentModelId}`);
+                        }
+                    } else {
+                        isCurrentModelValid = true;
+                    }
                 }
             }
 
             if (!isCurrentModelValid) {
                 console.log(`[ModelStateService] No valid ${type.toUpperCase()} model selected or selection forced. Finding an alternative...`);
-                const availableModels = await this.getAvailableModels(type);
+                availableModels = availableModels || await this.getAvailableModels(type);
                 if (availableModels.length > 0) {
                     const apiModel = availableModels.find(model => {
                         const provider = this.getProviderForModel(model.id, type);
@@ -202,6 +233,41 @@ class ModelStateService extends EventEmitter {
                 await this._autoSelectAvailableModels(typesToReselect);
             }
         }
+    }
+
+    async getCodexAuthStatus() {
+        const status = await codexAuthService.getStatus();
+        const setting = await providerSettingsRepository.getByProvider('codex');
+        const selected = await this.getSelectedModels();
+        return {
+            ...status,
+            enabled: !!setting?.api_key,
+            selected: this.getProviderForModel(selected.llm, 'llm') === 'codex',
+        };
+    }
+
+    async startCodexLogin() {
+        return codexAuthService.startLogin();
+    }
+
+    async enableCodexAuthProvider() {
+        const status = await codexAuthService.getStatus();
+        if (!status.available) {
+            return { success: false, error: status.error || 'Codex CLI is not available.', status };
+        }
+        if (!status.loggedIn) {
+            return { success: false, error: 'OpenAI Codex is not logged in.', status };
+        }
+
+        const result = await this.setApiKey('codex', 'codex-auth');
+        if (!result.success) return result;
+
+        const defaultModel = PROVIDERS.codex?.llmModels?.[0]?.id;
+        if (defaultModel) {
+            await this.setSelectedModel('llm', defaultModel);
+        }
+
+        return { success: true, status: await this.getCodexAuthStatus() };
     }
 
     async setApiKey(provider, key) {

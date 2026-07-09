@@ -144,6 +144,10 @@ class AskService {
         }
     }
 
+    isBusy() {
+        return this.state.isLoading || this.state.isStreaming;
+    }
+
     async toggleAskButton(inputScreenOnly = false) {
         const askWindow = getWindowPool()?.get('ask');
 
@@ -254,7 +258,8 @@ class AskService {
 
             const conversationHistory = this._formatConversationForPrompt(conversationHistoryRaw);
 
-            const systemPrompt = getSystemPrompt('pickle_glass_analysis', conversationHistory, false);
+            const systemPrompt = getSystemPrompt('pickle_glass_analysis', '', false)
+                .replace('{{CONVERSATION_HISTORY}}', conversationHistory);
 
             const messages = [
                 { role: 'system', content: systemPrompt },

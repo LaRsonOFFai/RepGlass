@@ -146,9 +146,50 @@ class HeaderTransitionManager {
 
     // WelcomeHeader 콜백 메서드들
     async handleLoginOption() {
-        console.log('[HeaderController] Login option selected');
-        if (window.api) {
-            await window.api.common.startFirebaseAuth();
+        console.log('[HeaderController] OpenAI Codex option selected');
+        if (!window.api?.common) return;
+
+        let status = await window.api.common.getCodexStatus();
+        if (!status?.available) {
+            await this._resizeForApiKey(400);
+            this.ensureHeader('apikey');
+            if (this.apiKeyHeader) {
+                this.apiKeyHeader.llmError = `*${status?.error || 'Codex CLI is not available'}`;
+            }
+            return;
+        }
+
+        if (!status.loggedIn) {
+            await window.api.common.startCodexLogin();
+            return;
+        }
+
+        const result = await window.api.common.enableCodexProvider();
+        if (!result?.success) {
+            await this._resizeForApiKey(400);
+            this.ensureHeader('apikey');
+            if (this.apiKeyHeader) {
+                this.apiKeyHeader.llmProvider = 'codex';
+                this.apiKeyHeader.llmError = `*${result?.error || 'Could not enable Codex'}`;
+            }
+            return;
+        }
+
+        const isConfigured = await window.api.apiKeyHeader.areProvidersConfigured();
+        if (isConfigured) {
+            const permissionResult = await this.checkPermissions();
+            if (permissionResult.success) {
+                this.transitionToMainHeader();
+            } else {
+                this.transitionToPermissionHeader();
+            }
+            return;
+        }
+
+        await this._resizeForApiKey(400);
+        this.ensureHeader('apikey');
+        if (this.apiKeyHeader) {
+            this.apiKeyHeader.llmProvider = 'codex';
         }
     }
 

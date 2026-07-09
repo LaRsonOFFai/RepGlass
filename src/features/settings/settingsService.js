@@ -385,14 +385,10 @@ async function removeApiKey() {
 async function updateContentProtection(enabled) {
     try {
         const settings = await getSettings();
-        settings.contentProtection = enabled;
+        settings.contentProtection = true;
         
-        // Update content protection in main window
-        const { app } = require('electron');
-        const mainWindow = windowPool.get('main');
-        if (mainWindow && !mainWindow.isDestroyed()) {
-            mainWindow.setContentProtection(enabled);
-        }
+        const windowManager = require('../../../window/windowManager');
+        windowManager.setContentProtection(true);
         
         return await saveSettings(settings);
     } catch (error) {

@@ -33,6 +33,7 @@ class WhisperService extends EventEmitter {
             isInstalled: false,
             isInitialized: false
         };
+        this.initializationPromise = null;
         
         // 사용 가능한 모델
         this.availableModels = {
@@ -275,8 +276,9 @@ class WhisperService extends EventEmitter {
 
     async initialize() {
         if (this.installState.isInitialized) return;
+        if (this.initializationPromise) return this.initializationPromise;
 
-        try {
+        this.initializationPromise = (async () => {
             const homeDir = os.homedir();
             const whisperDir = path.join(homeDir, '.glass', 'whisper');
             
@@ -285,7 +287,7 @@ class WhisperService extends EventEmitter {
             
             // Windows에서는 .exe 확장자 필요
             const platform = this.getPlatform();
-            const whisperExecutable = platform === 'win32' ? 'whisper-whisper.exe' : 'whisper';
+            const whisperExecutable = platform === 'win32' ? 'whisper-cli.exe' : 'whisper';
             this.whisperPath = path.join(whisperDir, 'bin', whisperExecutable);
 
             await this.ensureDirectories();
@@ -293,6 +295,10 @@ class WhisperService extends EventEmitter {
             
             this.installState.isInitialized = true;
             console.log('[WhisperService] Initialized successfully');
+        })();
+
+        try {
+            await this.initializationPromise;
         } catch (error) {
             console.error('[WhisperService] Initialization failed:', error);
             // Emit error event - LocalAIManager가 처리
@@ -301,6 +307,8 @@ class WhisperService extends EventEmitter {
                 error: error.message
             });
             throw error;
+        } finally {
+            this.initializationPromise = null;
         }
     }
 
@@ -377,8 +385,12 @@ class WhisperService extends EventEmitter {
 
         try {
             await fsPromises.access(this.whisperPath, fs.constants.X_OK);
-            console.log('[WhisperService] Custom whisper binary found');
-            return;
+            const verified = await this.verifyInstallation();
+            if (verified.success) {
+                console.log('[WhisperService] Custom whisper binary found');
+                return;
+            }
+            console.warn(`[WhisperService] Custom whisper binary is invalid: ${verified.error}`);
         } catch (error) {
             // Continue to installation
         }
@@ -520,22 +532,21 @@ class WhisperService extends EventEmitter {
         return this.whisperPath;
     }
 
-    async saveAudioToTemp(audioBuffer, sessionId = '') {
+    async saveAudioToTemp(audioBuffer, sessionId = '', sampleRate = 16000) {
         const timestamp = Date.now();
         const random = Math.random().toString(36).substr(2, 6);
         const sessionPrefix = sessionId ? `${sessionId}_` : '';
         const tempFile = path.join(this.tempDir, `audio_${sessionPrefix}${timestamp}_${random}.wav`);
         
-        const wavHeader = this.createWavHeader(audioBuffer.length);
+        const wavHeader = this.createWavHeader(audioBuffer.length, sampleRate);
         const wavBuffer = Buffer.concat([wavHeader, audioBuffer]);
         
         await fsPromises.writeFile(tempFile, wavBuffer);
         return tempFile;
     }
 
-    createWavHeader(dataSize) {
+    createWavHeader(dataSize, sampleRate = 16000) {
         const header = Buffer.alloc(44);
-        const sampleRate = 16000;
         const numChannels = 1;
         const bitsPerSample = 16;
         
@@ -643,7 +654,8 @@ class WhisperService extends EventEmitter {
     async installWindows() {
         console.log('[WhisperService] Installing Whisper on Windows...');
         const version = 'v1.7.6';
-        const binaryUrl = `https://github.com/ggml-org/whisper.cpp/releases/download/${version}/whisper-bin-x64.zip`;
+        const binaryUrl = DOWNLOAD_CHECKSUMS.whisper.binaries[version]?.windows?.url
+            || `https://github.com/ggml-org/whisper.cpp/releases/download/${version}/whisper-cpp-${version}-win-x64.zip`;
         const tempFile = path.join(this.tempDir, 'whisper-binary.zip');
         
         try {
@@ -671,9 +683,21 @@ class WhisperService extends EventEmitter {
             
             // 첫 번째로 찾은 whisper.exe를 목표 위치로 복사
             const sourceExecutable = whisperExecutables[0];
+            const sourceDir = path.dirname(sourceExecutable);
             const targetDir = path.dirname(this.whisperPath);
             await fsPromises.mkdir(targetDir, { recursive: true });
-            await fsPromises.copyFile(sourceExecutable, this.whisperPath);
+
+            const releaseFiles = await fsPromises.readdir(sourceDir, { withFileTypes: true });
+            await Promise.all(releaseFiles
+                .filter(item => item.isFile())
+                .map(item => fsPromises.copyFile(
+                    path.join(sourceDir, item.name),
+                    path.join(targetDir, item.name)
+                )));
+
+            if (path.basename(sourceExecutable).toLowerCase() !== path.basename(this.whisperPath).toLowerCase()) {
+                await fsPromises.copyFile(sourceExecutable, this.whisperPath);
+            }
             
             console.log('[WhisperService] Step 4: Verifying installation...');
             
@@ -711,6 +735,7 @@ class WhisperService extends EventEmitter {
     // 압축 해제된 디렉토리에서 whisper.exe 파일들을 재귀적으로 찾기
     async findWhisperExecutables(dir) {
         const executables = [];
+        const candidates = new Set(['whisper-cli.exe', 'whisper.exe', 'main.exe', 'whisper-whisper.exe']);
         
         try {
             const items = await fsPromises.readdir(dir, { withFileTypes: true });
@@ -721,7 +746,7 @@ class WhisperService extends EventEmitter {
                 if (item.isDirectory()) {
                     const subExecutables = await this.findWhisperExecutables(fullPath);
                     executables.push(...subExecutables);
-                } else if (item.isFile() && (item.name === 'whisper-whisper.exe' || item.name === 'whisper.exe' || item.name === 'main.exe')) {
+                } else if (item.isFile() && candidates.has(item.name.toLowerCase())) {
                     executables.push(fullPath);
                 }
             }
@@ -729,7 +754,17 @@ class WhisperService extends EventEmitter {
             console.warn('[WhisperService] Error reading directory:', dir, error.message);
         }
         
-        return executables;
+        return executables.sort((a, b) => {
+            const score = filePath => {
+                const name = path.basename(filePath).toLowerCase();
+                if (name === 'whisper-cli.exe') return 0;
+                if (name === 'whisper.exe') return 1;
+                if (name === 'main.exe') return 2;
+                if (name === 'whisper-whisper.exe') return 3;
+                return 10;
+            };
+            return score(a) - score(b);
+        });
     }
     
     // 디렉토리 재귀적 삭제
@@ -847,8 +882,9 @@ WhisperService.prototype.verifyInstallation = async function() {
         
         // 2. check version
         try {
-            const { stdout } = await spawnAsync(this.whisperPath, ['--help']);
-            if (!stdout.includes('whisper')) {
+            const { stdout, stderr } = await spawnAsync(this.whisperPath, ['--help']);
+            const helpText = `${stdout || ''}\n${stderr || ''}`;
+            if (!/whisper|usage:/i.test(helpText)) {
                 return { success: false, error: 'Invalid whisper binary' };
             }
         } catch (error) {

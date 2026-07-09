@@ -1,6 +1,7 @@
 const { BrowserWindow } = require('electron');
 const SttService = require('./stt/sttService');
 const SummaryService = require('./summary/summaryService');
+const AutoAnswerService = require('./autoAnswer/autoAnswerService');
 const authService = require('../common/services/authService');
 const sessionRepository = require('../common/repositories/session');
 const sttRepository = require('./stt/repositories');
@@ -10,6 +11,7 @@ class ListenService {
     constructor() {
         this.sttService = new SttService();
         this.summaryService = new SummaryService();
+        this.autoAnswerService = new AutoAnswerService();
         this.currentSessionId = null;
         this.isInitializingSession = false;
 
@@ -33,6 +35,12 @@ class ListenService {
             onAnalysisComplete: (data) => {
                 console.log('📊 Analysis completed:', data);
             },
+            onStatusUpdate: (status) => {
+                this.sendToRenderer('update-status', status);
+            }
+        });
+
+        this.autoAnswerService.setCallbacks({
             onStatusUpdate: (status) => {
                 this.sendToRenderer('update-status', status);
             }
@@ -104,6 +112,25 @@ class ListenService {
         
         // Add to summary service for analysis
         this.summaryService.addConversationTurn(speaker, text);
+
+        // Proactively answer detected questions without requiring the Ask hotkey.
+        this.autoAnswerService.handleConversationTurn({
+            speaker,
+            text,
+            conversationHistory: this.summaryService.getConversationHistory(),
+            sessionId: this.currentSessionId,
+        });
+    }
+
+    async answerLatestQuestionFromAudio() {
+        const conversationHistory = this.summaryService.getConversationHistory();
+        const result = await this.autoAnswerService.answerLatestQuestionNow({ conversationHistory });
+
+        if (result?.success) {
+            this.sendToRenderer('update-status', 'Answering latest audio question...');
+        }
+
+        return result;
     }
 
     async saveConversationTurn(speaker, transcription) {
@@ -144,6 +171,7 @@ class ListenService {
             
             // Reset conversation history
             this.summaryService.resetConversationHistory();
+            this.autoAnswerService.reset();
 
             console.log('New conversation session started:', this.currentSessionId);
             return true;
@@ -245,6 +273,7 @@ class ListenService {
             // Reset state
             this.currentSessionId = null;
             this.summaryService.resetConversationHistory();
+            this.autoAnswerService.reset();
 
             console.log('Listen service session closed.');
             return { success: true };
