@@ -8,6 +8,7 @@
         "setup": "npm install && cd pickleglass_web && npm install && npm run build && cd .. && npm start",
         "start": "npm run build:renderer && electron .",
         "start:hidden": "wscript Start-RepGlass-hidden.vbs",
+        "shortcut:hidden": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/create-hidden-shortcut.ps1",
         "package": "npm run build:all && electron-builder --dir",
         "make": "npm run build:renderer && electron-forge make",
         "build": "npm run build:all && electron-builder --config electron-builder.yml --publish never",
