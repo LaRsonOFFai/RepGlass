@@ -3,13 +3,21 @@ const WebSocket = require('ws');
 const { Readable } = require('stream');
 const { getProviderForModel } = require('../factory.js');
 
+const DEFAULT_REALTIME_SESSION_MODEL = 'gpt-realtime-2.1';
 const DEFAULT_REALTIME_TRANSCRIPTION_MODEL = 'gpt-realtime-whisper';
 const REALTIME_TRANSCRIPTION_COMMIT_BYTES = 24000 * 2;
 const REALTIME_TRANSCRIPTION_COMMIT_MS = 1000;
 
+function normalizeRealtimeSessionModel(model) {
+  const normalized = typeof model === 'string' ? model.replace(/-glass$/, '') : '';
+  return normalized && normalized.startsWith('gpt-realtime-') && !normalized.startsWith('gpt-realtime-whisper')
+    ? normalized
+    : DEFAULT_REALTIME_SESSION_MODEL;
+}
+
 function normalizeRealtimeTranscriptionModel(model) {
   const normalized = typeof model === 'string' ? model.replace(/-glass$/, '') : '';
-  return normalized && normalized.startsWith('gpt-realtime-')
+  return normalized && normalized.startsWith('gpt-realtime-whisper')
     ? normalized
     : DEFAULT_REALTIME_TRANSCRIPTION_MODEL;
 }
@@ -66,12 +74,13 @@ async function createSTT({
 }) {
   const keyType = usePortkey ? 'vKey' : 'apiKey';
   const key = usePortkey ? (portkeyVirtualKey || apiKey) : apiKey;
+  const realtimeSessionModel = normalizeRealtimeSessionModel(config.realtimeSessionModel || process.env.OPENAI_REALTIME_SESSION_MODEL);
   const realtimeModel = normalizeRealtimeTranscriptionModel(model);
   const realtimeLanguage = normalizeLanguage(language);
 
   const wsUrl = keyType === 'apiKey'
-    ? `wss://api.openai.com/v1/realtime?model=${encodeURIComponent(realtimeModel)}`
-    : `wss://api.portkey.ai/v1/realtime?model=${encodeURIComponent(realtimeModel)}`;
+    ? `wss://api.openai.com/v1/realtime?model=${encodeURIComponent(realtimeSessionModel)}`
+    : `wss://api.portkey.ai/v1/realtime?model=${encodeURIComponent(realtimeSessionModel)}`;
 
   const headers = keyType === 'apiKey'
     ? {
@@ -114,8 +123,35 @@ async function createSTT({
   };
 
   return new Promise((resolve, reject) => {
+    let resolved = false;
+    let sessionReadyTimeout = null;
+    let sttSession = null;
+
+    const clearSessionReadyTimeout = () => {
+      if (sessionReadyTimeout) {
+        clearTimeout(sessionReadyTimeout);
+        sessionReadyTimeout = null;
+      }
+    };
+
+    const resolveSession = () => {
+      clearSessionReadyTimeout();
+      if (!resolved) {
+        resolved = true;
+        resolve(sttSession);
+      }
+    };
+
+    const rejectSession = error => {
+      clearSessionReadyTimeout();
+      if (!resolved) {
+        resolved = true;
+        reject(error);
+      }
+    };
+
     ws.onopen = () => {
-      console.log(`[OpenAI STT] Realtime WebSocket opened with ${realtimeModel}.`);
+      console.log(`[OpenAI STT] Realtime WebSocket opened with session=${realtimeSessionModel}, transcription=${realtimeModel}.`);
 
       const sessionConfig = {
         type: 'session.update',
@@ -137,8 +173,6 @@ async function createSTT({
         }
       };
 
-      ws.send(JSON.stringify(sessionConfig));
-
       // Helper to periodically keep the websocket alive
       const keepAlive = () => {
         try {
@@ -151,7 +185,7 @@ async function createSTT({
         }
       };
 
-      resolve({
+      sttSession = {
         sendRealtimeInput: (audioData) => {
           if (ws.readyState === WebSocket.OPEN) {
             const message = {
@@ -173,7 +207,12 @@ async function createSTT({
             ws.close(1000, 'Client initiated close.');
           }
         }
-      });
+      };
+
+      ws.send(JSON.stringify(sessionConfig));
+      sessionReadyTimeout = setTimeout(() => {
+        rejectSession(new Error('OpenAI Realtime STT session did not become ready.'));
+      }, 10000);
     };
 
     ws.onmessage = (event) => {
@@ -192,6 +231,10 @@ async function createSTT({
         error.code = msg.error.code;
         error.raw = msg.error;
         callbacks.onerror?.(error);
+        rejectSession(error);
+      }
+      if ((msg.type === 'session.updated' || msg.type === 'transcription_session.updated') && sttSession) {
+        resolveSession();
       }
       callbacks.onmessage?.(msg);
     };
@@ -201,7 +244,7 @@ async function createSTT({
       if (callbacks && callbacks.onerror) {
         callbacks.onerror(error);
       }
-      reject(error);
+      rejectSession(error);
     };
 
     ws.onclose = (event) => {
@@ -210,6 +253,9 @@ async function createSTT({
         commitTimer = null;
       }
       console.log(`WebSocket closed: ${event.code} ${event.reason}`);
+      if (!resolved) {
+        rejectSession(new Error(`OpenAI Realtime STT socket closed before ready: ${event.code} ${event.reason}`));
+      }
       if (callbacks && callbacks.onclose) {
         callbacks.onclose(event);
       }

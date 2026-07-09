@@ -2,6 +2,7 @@ const { BrowserWindow } = require('electron');
 const { createStreamingLLM } = require('../common/ai/factory');
 // Lazy require helper to avoid circular dependency issues
 const getWindowManager = () => require('../../window/windowManager');
+const getTrayManager = () => require('../../window/trayManager');
 const internalBridge = require('../../bridge/internalBridge');
 
 const getWindowPool = () => {
@@ -35,7 +36,7 @@ try {
 }
 let lastScreenshot = null;
 
-async function captureScreenshot(options = {}) {
+async function captureScreenshotWithoutTray(options = {}) {
     if (process.platform === 'darwin') {
         try {
             const tempPath = path.join(os.tmpdir(), `screenshot-${Date.now()}.jpg`);
@@ -116,6 +117,18 @@ async function captureScreenshot(options = {}) {
             success: false,
             error: error.message,
         };
+    }
+}
+
+async function captureScreenshot(options = {}) {
+    const trayManager = getTrayManager();
+    trayManager.hideForCapture('screenshot');
+
+    try {
+        await new Promise(resolve => setTimeout(resolve, 180));
+        return await captureScreenshotWithoutTray(options);
+    } finally {
+        trayManager.showAfterCapture('screenshot');
     }
 }
 

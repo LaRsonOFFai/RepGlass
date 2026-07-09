@@ -5,6 +5,13 @@ const listenService = require('../features/listen/listenService');
 const shortcutsService = require('../features/shortcuts/shortcutsService');
 
 let tray = null;
+let isQuitting = false;
+const captureHideReasons = new Set();
+
+app.on('before-quit', () => {
+    isQuitting = true;
+    captureHideReasons.clear();
+});
 
 function getWindowManager() {
     return require('./windowManager');
@@ -125,7 +132,34 @@ function updateMenu() {
     tray.setContextMenu(Menu.buildFromTemplate(template));
 }
 
+function hideForCapture(reason = 'capture') {
+    captureHideReasons.add(reason);
+    if (!tray) return;
+
+    try {
+        tray.destroy();
+    } catch (error) {
+        console.warn('[TrayManager] Failed to hide tray icon:', error.message);
+    } finally {
+        tray = null;
+    }
+}
+
+function showAfterCapture(reason = 'capture') {
+    captureHideReasons.delete(reason);
+    if (captureHideReasons.size > 0 || tray || isQuitting) return tray;
+    return initialize();
+}
+
+function isHiddenForCapture() {
+    return captureHideReasons.size > 0;
+}
+
 function initialize() {
+    if (captureHideReasons.size > 0 || isQuitting) {
+        return null;
+    }
+
     if (tray) {
         updateMenu();
         return tray;
@@ -148,4 +182,7 @@ function initialize() {
 module.exports = {
     initialize,
     updateMenu,
+    hideForCapture,
+    showAfterCapture,
+    isHiddenForCapture,
 };

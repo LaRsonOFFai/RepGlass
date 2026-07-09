@@ -6,6 +6,7 @@ const authService = require('../common/services/authService');
 const sessionRepository = require('../common/repositories/session');
 const sttRepository = require('./stt/repositories');
 const internalBridge = require('../../bridge/internalBridge');
+const getTrayManager = () => require('../../window/trayManager');
 
 class ListenService {
     constructor() {
@@ -70,8 +71,12 @@ class ListenService {
             switch (listenButtonText) {
                 case 'Listen':
                     console.log('[ListenService] changeSession to "Listen"');
+                    getTrayManager().hideForCapture('listen');
                     internalBridge.emit('window:requestVisibility', { name: 'listen', visible: true });
-                    await this.initializeSession();
+                    if (!await this.initializeSession()) {
+                        getTrayManager().showAfterCapture('listen');
+                        throw new Error('Failed to initialize listen session');
+                    }
                     if (listenWindow && !listenWindow.isDestroyed()) {
                         listenWindow.webContents.send('session-state-changed', { isActive: true });
                     }
@@ -80,6 +85,7 @@ class ListenService {
                 case 'Stop':
                     console.log('[ListenService] changeSession to "Stop"');
                     await this.closeSession();
+                    getTrayManager().showAfterCapture('listen');
                     if (listenWindow && !listenWindow.isDestroyed()) {
                         listenWindow.webContents.send('session-state-changed', { isActive: false });
                     }
@@ -88,7 +94,12 @@ class ListenService {
                 case 'Done':
                     console.log('[ListenService] changeSession to "Done"');
                     internalBridge.emit('window:requestVisibility', { name: 'listen', visible: false });
-                    listenWindow.webContents.send('session-state-changed', { isActive: false });
+                    if (!this.isSessionActive()) {
+                        getTrayManager().showAfterCapture('listen');
+                    }
+                    if (listenWindow && !listenWindow.isDestroyed()) {
+                        listenWindow.webContents.send('session-state-changed', { isActive: false });
+                    }
                     break;
         
                 default:
@@ -99,6 +110,7 @@ class ListenService {
 
         } catch (error) {
             console.error('[ListenService] error in handleListenRequest:', error);
+            getTrayManager().showAfterCapture('listen');
             header.webContents.send('listen:changeSessionResult', { success: false });
             throw error; 
         }
@@ -191,6 +203,7 @@ class ListenService {
         this.isInitializingSession = true;
         this.sendToRenderer('session-initializing', true);
         this.sendToRenderer('update-status', 'Initializing sessions...');
+        let shouldStartCapture = false;
 
         try {
             // Initialize database session
@@ -224,6 +237,7 @@ class ListenService {
             console.log('✅ Listen service initialized successfully.');
             
             this.sendToRenderer('update-status', 'Connected. Ready to listen.');
+            shouldStartCapture = true;
             
             return true;
         } catch (error) {
@@ -233,7 +247,9 @@ class ListenService {
         } finally {
             this.isInitializingSession = false;
             this.sendToRenderer('session-initializing', false);
-            this.sendToRenderer('change-listen-capture-state', { status: "start" });
+            if (shouldStartCapture) {
+                this.sendToRenderer('change-listen-capture-state', { status: "start" });
+            }
         }
     }
 
@@ -276,6 +292,7 @@ class ListenService {
             this.autoAnswerService.reset();
 
             console.log('Listen service session closed.');
+            getTrayManager().showAfterCapture('listen');
             return { success: true };
         } catch (error) {
             console.error('Error closing listen service session:', error);
