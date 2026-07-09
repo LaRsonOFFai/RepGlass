@@ -1,67 +1,69 @@
 # RepGlass
 
-RepGlass is a translucent desktop AI assistant inspired by Glass, rebuilt for a
-modern Windows/Electron workflow. It listens to live audio, keeps a compact
-overlay on screen, answers detected questions, and stays protected from normal
-screen sharing through Electron content protection.
+RepGlass - это полупрозрачный настольный AI-ассистент для Windows, вдохновленный
+проектом Glass. Приложение слушает аудио в реальном времени, показывает ответы в
+аккуратном overlay-окне, умеет автоматически замечать вопросы в расшифровке и
+может использовать OpenAI Codex Auth для ответов через локальный Codex CLI.
 
-The project is based on `pickle-com/glass`, but the app name, startup behavior,
-provider setup, tray controls, and OpenAI Codex integration were adapted for
-RepGlass.
+Проект основан на `pickle-com/glass`, но адаптирован под RepGlass: изменено
+название, обновлены зависимости, добавлен запуск без лишних технических окон,
+добавлен tray-режим, OpenAI Codex Auth, автоответы во время прослушивания и
+подробная инструкция для установки на ПК.
 
-## What It Does
+## Возможности
 
-- Shows a small translucent always-on-top answer overlay.
-- Starts cleanly without opening a stack of DevTools/browser windows.
-- Lives in the Windows tray with quick controls for Listen, Ask, Settings, and
-  show/hide.
-- Keeps Electron windows excluded from normal screen capture where the OS and
-  meeting app support protected content.
-- Supports OpenAI, OpenAI Codex Auth, Gemini, Anthropic, Deepgram, Ollama, and
-  local Whisper.
-- Can detect questions in the live transcript and open an answer automatically.
-- Can still answer manually with `Ctrl + Enter`.
-- Stores provider keys locally through the existing app settings flow.
+- Полупрозрачное окно поверх остальных приложений для вывода ответов.
+- Запуск без кучи DevTools и технических браузерных окон.
+- Иконка в системном трее Windows с быстрыми действиями: показать/скрыть окно,
+  запустить Listen, открыть Ask и Settings.
+- Защита окон Electron от обычной записи экрана и демонстрации экрана через
+  `contentProtection`, где это поддерживается Windows и приложением для звонков.
+- Поддержка OpenAI, OpenAI Codex Auth, Gemini, Anthropic, Deepgram, Ollama и
+  локального Whisper.
+- Автоматическое обнаружение вопросов в live-транскрипции и запуск ответа без
+  постоянного нажатия `Ctrl + Enter`.
+- Ручной запрос ответа по горячей клавише `Ctrl + Enter`.
+- Локальное хранение ключей провайдеров через настройки приложения.
 
-## Important Auth Notes
+## Важное про OpenAI Codex Auth
 
-OpenAI Codex login is supported for answers through the local Codex CLI. The app
-checks:
+OpenAI Codex Auth поддерживается для ответов через локальный Codex CLI.
+Приложение проверяет:
 
 ```powershell
 codex --version
 codex login status
 ```
 
-If Codex is installed and logged in, choose `OpenAI Codex Auth` as the LLM
-provider in RepGlass.
+Если Codex установлен и пользователь авторизован, в RepGlass можно выбрать
+`OpenAI Codex Auth` как LLM-провайдер.
 
-Codex login is not a speech-to-text API. For listening/transcription, choose one
-of the STT providers:
+Важно: Codex login не является API для распознавания речи. Для прослушивания и
+транскрипции нужно выбрать отдельный STT-провайдер:
 
-- `Whisper (Local)` for local speech recognition.
-- `OpenAI` with an OpenAI Platform API key.
-- `Gemini` with a Google AI Studio API key.
-- `Deepgram` with a Deepgram API key.
+- `Whisper (Local)` - локальное распознавание речи без облачного API-ключа.
+- `OpenAI` - через OpenAI Platform API key.
+- `Gemini` - через Google AI Studio API key.
+- `Deepgram` - через Deepgram API key.
 
-ChatGPT Plus/Pro and Codex login are not direct billing credentials for arbitrary
-third-party API calls. For a paid app subscription model, use a backend gateway;
-see [OpenAI subscription gateway](./docs/OPENAI_SUBSCRIPTION_GATEWAY.md).
+Подписка ChatGPT Plus/Pro и вход в Codex не являются прямыми платежными данными
+для любых сторонних API-вызовов. Для подписки внутри собственного приложения
+нужен backend gateway. Подробнее: [OpenAI subscription gateway](./docs/OPENAI_SUBSCRIPTION_GATEWAY.md).
 
-## Requirements
+## Требования
 
-Recommended for Windows:
+Рекомендуемая среда для Windows:
 
 - Windows 10/11 x64.
 - Git.
 - Node.js `24.x`.
 - npm `11.x`.
-- Python 3.11 or newer.
-- Visual Studio Build Tools 2022 with the `Desktop development with C++`
-  workload. This is needed by native Electron dependencies such as SQLite/keytar.
-- Optional: OpenAI Codex CLI for `OpenAI Codex Auth`.
+- Python 3.11 или новее.
+- Visual Studio Build Tools 2022 с компонентом `Desktop development with C++`.
+  Это нужно для нативных Electron-зависимостей, например SQLite/keytar.
+- Опционально: OpenAI Codex CLI, если нужен режим `OpenAI Codex Auth`.
 
-Check your versions:
+Проверка версий:
 
 ```powershell
 node --version
@@ -70,25 +72,25 @@ python --version
 git --version
 ```
 
-This repository includes `.nvmrc` and `.node-version` pinned to the tested Node
-major version.
+В репозитории есть `.nvmrc` и `.node-version` с зафиксированной основной версией
+Node.js.
 
-## Install On A PC
+## Установка на ПК
 
-Clone the repository:
+Склонируйте репозиторий:
 
 ```powershell
 git clone https://github.com/LaRsonOFFai/RepGlass.git
 cd RepGlass
 ```
 
-Install desktop dependencies:
+Установите зависимости основного Electron-приложения:
 
 ```powershell
 npm install
 ```
 
-Install and build the web/login part:
+Установите зависимости и соберите web/login-часть:
 
 ```powershell
 cd pickleglass_web
@@ -97,49 +99,50 @@ npm run build
 cd ..
 ```
 
-Start the desktop app:
+Запустите приложение:
 
 ```powershell
 npm start
 ```
 
-The app should open the translucent overlay and create a tray icon. Use the tray
-menu if the overlay is hidden behind other windows.
+После запуска должно появиться полупрозрачное окно RepGlass и иконка в трее.
+Если окно скрыто, откройте его через меню иконки в трее.
 
-## One-Command Setup
+## Быстрая установка одной командой
 
-For a fresh local setup you can also run:
+Для свежей локальной установки можно выполнить:
 
 ```powershell
 npm run setup
 ```
 
-This installs root dependencies, installs/builds `pickleglass_web`, and starts
-RepGlass.
+Команда установит зависимости в корне проекта, установит и соберет
+`pickleglass_web`, а затем запустит RepGlass.
 
-## Start With Hidden PowerShell
+## Запуск со скрытым PowerShell
 
-For normal daily use on Windows:
+Для обычного ежедневного запуска на Windows:
 
 ```powershell
 npm run start:hidden
 ```
 
-This launches RepGlass through `Start-RepGlass-hidden.vbs` and writes logs to:
+Приложение будет запущено через `Start-RepGlass-hidden.vbs`, а логи будут
+записываться сюда:
 
 ```text
 %LOCALAPPDATA%\RepGlass\repglass-hidden.log
 ```
 
-There is also a direct helper script:
+Также можно запустить helper-скрипт напрямую:
 
 ```powershell
 .\scripts\start-hidden.ps1
 ```
 
-## Configure AI Providers
+## Настройка AI-провайдеров
 
-Open Settings in the app and select providers for LLM and STT.
+Откройте Settings в приложении и выберите провайдеры для LLM и STT.
 
 OpenAI API key:
 
@@ -155,9 +158,9 @@ $env:GEMINI_API_KEY="your-google-ai-studio-key"
 npm start
 ```
 
-Local Whisper does not require a cloud API key. It downloads/uses local model
-files and is slower on weak CPUs. `whisper-small` is usually a better real-time
-choice than `whisper-medium`.
+Локальный Whisper не требует облачного API-ключа. Он использует локальные модели
+и может работать медленнее на слабых CPU. Для real-time режима обычно лучше
+использовать `whisper-small`, а не `whisper-medium`.
 
 OpenAI Codex Auth:
 
@@ -167,26 +170,26 @@ codex login status
 npm start
 ```
 
-Then choose `OpenAI Codex Auth` for the LLM provider. Keep STT on Whisper,
-OpenAI, Gemini, or Deepgram.
+После этого выберите `OpenAI Codex Auth` как LLM-провайдер. Для STT оставьте
+Whisper, OpenAI, Gemini или Deepgram.
 
-## Live Listening And Auto Answers
+## Прослушивание и автоответы
 
-1. Start RepGlass.
-2. Open Settings and choose an STT provider.
-3. Press `Listen`.
-4. Speak normally or play meeting audio.
-5. Open `Show Transcription` to inspect recognized text.
-6. Ask a question aloud. RepGlass should detect likely questions and prepare an
-   answer automatically.
+1. Запустите RepGlass.
+2. Откройте Settings и выберите STT-провайдер.
+3. Нажмите `Listen`.
+4. Говорите в микрофон или включите аудио встречи.
+5. Откройте `Show Transcription`, чтобы проверить распознанный текст.
+6. Задайте вопрос вслух. RepGlass должен определить вопрос и подготовить ответ
+   автоматически.
 
-Manual answer shortcut:
+Ручной запуск ответа:
 
 ```text
 Ctrl + Enter
 ```
 
-Auto-answer environment controls:
+Настройки автоответов через переменные окружения:
 
 ```powershell
 $env:PICKLE_AUTO_ANSWER_ENABLED="false"
@@ -195,114 +198,115 @@ $env:PICKLE_AUTO_ANSWER_COOLDOWN_MS="12000"
 $env:PICKLE_AUTO_ANSWER_BUSY_RETRY_MS="2500"
 ```
 
-## Keyboard Shortcuts
+## Горячие клавиши
 
 ```text
-Ctrl + \      Show/hide the main overlay
-Ctrl + Enter  Ask AI using recent screen/audio context
-Ctrl + Arrow  Move the overlay
+Ctrl + \      Показать или скрыть основное overlay-окно
+Ctrl + Enter  Задать вопрос AI с учетом экрана и аудио-контекста
+Ctrl + Arrow  Переместить overlay-окно
 ```
 
-## Build Installer
+## Сборка установщика Windows
 
-Install dependencies first, then build:
+Сначала установите зависимости, затем выполните:
 
 ```powershell
 npm run build:win
 ```
 
-The packaged Windows output is created under:
+Собранные файлы появятся в папке:
 
 ```text
 dist\
 ```
 
-For an unpacked local package:
+Для локальной unpacked-сборки:
 
 ```powershell
 npm run package
 ```
 
-## Deploy From Source
+## Развертывание из исходников
 
-To deploy this project to a new PC:
+Чтобы развернуть RepGlass на новом ПК:
 
-1. Install the requirements listed above.
-2. Clone `https://github.com/LaRsonOFFai/RepGlass.git`.
-3. Run `npm install`.
-4. Run `cd pickleglass_web && npm install && npm run build && cd ..`.
-5. Run `npm start` for development, or `npm run build:win` to create an
-   installer.
-6. Configure providers inside Settings.
-7. For Codex answers, install/login to Codex CLI and choose `OpenAI Codex Auth`
-   as the LLM provider.
+1. Установите Git, Node.js 24, npm 11, Python и Visual Studio Build Tools.
+2. Склонируйте `https://github.com/LaRsonOFFai/RepGlass.git`.
+3. Выполните `npm install`.
+4. Выполните `cd pickleglass_web && npm install && npm run build && cd ..`.
+5. Запустите `npm start` для разработки или `npm run build:win` для сборки
+   установщика.
+6. Настройте AI-провайдеры внутри Settings.
+7. Для ответов через Codex установите Codex CLI, выполните `codex login` и
+   выберите `OpenAI Codex Auth` как LLM-провайдер.
 
-## Repository Layout
+## Структура проекта
 
 ```text
-src/                 Main Electron app, services, windows, providers, UI
-src/features/listen  Listening, STT, transcript, auto-answer logic
-src/features/ask     Ask/answer orchestration
-src/features/common  AI providers, auth, model state, shared services
-src/window           Overlay and tray window management
-pickleglass_web/     Web/login companion app
-docs/                Auth and subscription-gateway notes
-scripts/             Windows helper launch scripts
-glass-openai/        Experimental clean Electron/Vite rebuild prototype
+src/                 Основное Electron-приложение, сервисы, окна, UI
+src/features/listen  Прослушивание, STT, транскрипция, автоответы
+src/features/ask     Логика Ask/answer
+src/features/common  AI-провайдеры, авторизация, состояние моделей
+src/window           Overlay-окна и tray-менеджер
+pickleglass_web/     Web/login-часть проекта
+docs/                Заметки по Codex Auth и subscription gateway
+scripts/             Helper-скрипты запуска для Windows
+glass-openai/        Экспериментальный чистый Electron/Vite-прототип
 ```
 
-## Screen-Share Invisibility
+## Невидимость при демонстрации экрана
 
-RepGlass enables Electron content protection for its windows. This is the same
-class of protection used by many desktop apps to keep windows out of normal
-screen capture.
+RepGlass включает Electron `contentProtection` для своих окон. Это помогает
+скрывать окно приложения от обычной записи экрана и демонстрации экрана в тех
+случаях, где Windows и конкретная программа для звонков поддерживают такую
+защиту.
 
-Always test it in the exact meeting or recording app you plan to use. Some apps,
-drivers, capture cards, remote desktops, or admin policies can bypass normal OS
-capture protection.
+Обязательно проверьте это именно в той программе, где планируете использовать
+RepGlass. Некоторые приложения, драйверы, capture-card устройства, удаленные
+рабочие столы или корпоративные политики могут обходить стандартную защиту ОС.
 
-## Development
+## Разработка
 
-Build only the Electron renderer:
+Собрать только renderer Electron:
 
 ```powershell
 npm run build:renderer
 ```
 
-Build all local frontend assets:
+Собрать все локальные frontend-части:
 
 ```powershell
 npm run build:all
 ```
 
-Run formatter manually if needed:
+Запустить форматирование вручную:
 
 ```powershell
 npx prettier --write .
 ```
 
-## Troubleshooting
+## Частые проблемы
 
-If the overlay is not visible:
+Если overlay-окно не видно:
 
-- Check the tray icon and choose show/open.
-- Stop any old `electron.exe` processes and run `npm start` again.
-- Check `%LOCALAPPDATA%\RepGlass\repglass-hidden.log` if started hidden.
+- Проверьте иконку RepGlass в трее и выберите show/open.
+- Закройте старые процессы `electron.exe` и снова выполните `npm start`.
+- Если запускали скрыто, проверьте лог `%LOCALAPPDATA%\RepGlass\repglass-hidden.log`.
 
-If transcription is empty:
+Если транскрипция пустая:
 
-- Confirm that Windows microphone permissions are enabled.
-- Try `Whisper (Local)` with `whisper-small`.
-- Check that the selected STT provider has a valid key if it is cloud-based.
-- Speak for at least a few seconds so the audio chunk is long enough.
+- Проверьте разрешения Windows для микрофона.
+- Попробуйте `Whisper (Local)` с моделью `whisper-small`.
+- Убедитесь, что у выбранного cloud-STT провайдера введен корректный API-ключ.
+- Говорите несколько секунд подряд, чтобы аудио-фрагмент был достаточно длинным.
 
-If Codex Auth is unavailable:
+Если Codex Auth недоступен:
 
-- Run `codex --version`.
-- Run `codex login`.
-- Run `codex login status`.
-- Restart RepGlass and select `OpenAI Codex Auth` as LLM provider.
+- Выполните `codex --version`.
+- Выполните `codex login`.
+- Выполните `codex login status`.
+- Перезапустите RepGlass и выберите `OpenAI Codex Auth` как LLM-провайдер.
 
-## License
+## Лицензия
 
-GPL-3.0. This project keeps the upstream license from the original Glass codebase.
+GPL-3.0. Проект сохраняет лицензию исходной кодовой базы Glass.
