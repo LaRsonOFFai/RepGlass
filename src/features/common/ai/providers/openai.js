@@ -3,17 +3,9 @@ const WebSocket = require('ws');
 const { Readable } = require('stream');
 const { getProviderForModel } = require('../factory.js');
 
-const DEFAULT_REALTIME_SESSION_MODEL = 'gpt-realtime-2.1';
 const DEFAULT_REALTIME_TRANSCRIPTION_MODEL = 'gpt-realtime-whisper';
 const REALTIME_TRANSCRIPTION_COMMIT_BYTES = 24000 * 2;
 const REALTIME_TRANSCRIPTION_COMMIT_MS = 1000;
-
-function normalizeRealtimeSessionModel(model) {
-  const normalized = typeof model === 'string' ? model.replace(/-glass$/, '') : '';
-  return normalized && normalized.startsWith('gpt-realtime-') && !normalized.startsWith('gpt-realtime-whisper')
-    ? normalized
-    : DEFAULT_REALTIME_SESSION_MODEL;
-}
 
 function normalizeRealtimeTranscriptionModel(model) {
   const normalized = typeof model === 'string' ? model.replace(/-glass$/, '') : '';
@@ -74,13 +66,13 @@ async function createSTT({
 }) {
   const keyType = usePortkey ? 'vKey' : 'apiKey';
   const key = usePortkey ? (portkeyVirtualKey || apiKey) : apiKey;
-  const realtimeSessionModel = normalizeRealtimeSessionModel(config.realtimeSessionModel || process.env.OPENAI_REALTIME_SESSION_MODEL);
   const realtimeModel = normalizeRealtimeTranscriptionModel(model);
   const realtimeLanguage = normalizeLanguage(language);
+  const sessionLabel = config.sessionType || 'unknown';
 
   const wsUrl = keyType === 'apiKey'
-    ? `wss://api.openai.com/v1/realtime?model=${encodeURIComponent(realtimeSessionModel)}`
-    : `wss://api.portkey.ai/v1/realtime?model=${encodeURIComponent(realtimeSessionModel)}`;
+    ? 'wss://api.openai.com/v1/realtime?intent=transcription'
+    : 'wss://api.portkey.ai/v1/realtime?intent=transcription';
 
   const headers = keyType === 'apiKey'
     ? {
@@ -94,6 +86,8 @@ async function createSTT({
   const ws = new WebSocket(wsUrl, { headers });
   let pendingAudioBytes = 0;
   let commitTimer = null;
+  let audioChunkCount = 0;
+  let lastAudioLogAt = 0;
 
   const estimatePcmBytes = audioData => {
     if (typeof audioData !== 'string') return 0;
@@ -151,7 +145,7 @@ async function createSTT({
     };
 
     ws.onopen = () => {
-      console.log(`[OpenAI STT] Realtime WebSocket opened with session=${realtimeSessionModel}, transcription=${realtimeModel}.`);
+      console.log(`[OpenAI STT:${sessionLabel}] Realtime transcription WebSocket opened with ${realtimeModel}.`);
 
       const sessionConfig = {
         type: 'session.update',
@@ -194,6 +188,12 @@ async function createSTT({
             };
             ws.send(JSON.stringify(message));
             pendingAudioBytes += estimatePcmBytes(audioData);
+            audioChunkCount += 1;
+            const now = Date.now();
+            if (audioChunkCount === 1 || now - lastAudioLogAt > 5000) {
+              lastAudioLogAt = now;
+              console.log(`[OpenAI STT:${sessionLabel}] Sent audio chunk #${audioChunkCount} (${pendingAudioBytes} pending PCM bytes).`);
+            }
             scheduleCommit();
           }
         },
