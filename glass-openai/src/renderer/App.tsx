@@ -25,7 +25,7 @@ const APP_NAME = 'RepGlass';
 const docsUrl = 'https://platform.openai.com/api-keys';
 const modelOptions = ['gpt-4.1-mini', 'gpt-4.1', 'gpt-4o-mini', 'gpt-4o'];
 const codexModelOptions = ['gpt-5.5', 'gpt-5.1-codex-max', 'gpt-5.1-codex', 'gpt-5'];
-const transcriptionOptions = ['gpt-4o-mini-transcribe', 'gpt-4o-transcribe', 'whisper-1'];
+const transcriptionOptions = ['gpt-realtime-whisper'];
 
 type PanelMode = 'insights' | 'ask';
 
@@ -57,7 +57,14 @@ export function App() {
     const offError = window.glass.events.onError((message) => setStatus(message));
     const offListen = window.glass.events.onListenState((payload) => setListening(payload.listening));
     const offTranscript = window.glass.events.onTranscript((turn) => {
-      setTranscript((current) => [...current.slice(-24), turn]);
+      setTranscript((current) => {
+        const existingIndex = current.findIndex((item) => item.id === turn.id);
+        if (existingIndex < 0) return [...current.slice(-24), turn];
+
+        const next = [...current];
+        next[existingIndex] = turn;
+        return next;
+      });
     });
     const offAskState = window.glass.events.onAskState((payload) => setLoadingAnswer(payload.loading));
     const offAnswer = window.glass.events.onAnswer((answer) => {
@@ -129,10 +136,22 @@ export function App() {
       return;
     }
 
-    await capture.current.start(settings, async (payload) => {
-      await window.glass.listen.sendAudioChunk(payload);
-    });
-    await window.glass.listen.start();
+    const result = await window.glass.listen.start();
+    if (!result.success) {
+      setStatus(result.error || 'Could not start realtime transcription');
+      return;
+    }
+
+    try {
+      await capture.current.start(
+        settings,
+        (payload) => window.glass.listen.sendAudioChunk(payload),
+        () => window.glass.listen.commitAudio(),
+      );
+    } catch (error) {
+      await window.glass.listen.stop();
+      setStatus(error instanceof Error ? error.message : 'Could not capture audio');
+    }
   }, [canListen, settings]);
 
   const stopListening = useCallback(async () => {

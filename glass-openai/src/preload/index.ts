@@ -24,9 +24,10 @@ const api = {
     update: (patch: Partial<AppSettings>): Promise<AppSettings> => ipcRenderer.invoke('settings:update', patch),
   },
   listen: {
-    start: (): Promise<{ success: boolean }> => ipcRenderer.invoke('listen:start'),
+    start: (): Promise<{ success: boolean; error?: string }> => ipcRenderer.invoke('listen:start'),
     stop: (): Promise<{ success: boolean }> => ipcRenderer.invoke('listen:stop'),
-    sendAudioChunk: (payload: AudioChunkPayload): Promise<{ success: boolean }> => ipcRenderer.invoke('listen:audioChunk', payload),
+    sendAudioChunk: (payload: AudioChunkPayload): void => ipcRenderer.send('listen:audioChunk', payload),
+    commitAudio: (): void => ipcRenderer.send('listen:commit'),
   },
   ask: {
     send: (question: string): Promise<AnswerPayload> => ipcRenderer.invoke('ask:send', question),

@@ -1,37 +1,103 @@
 import type { AppSettings, AudioChunkPayload } from '../main/types';
 
 type ChunkHandler = (payload: AudioChunkPayload) => void | Promise<void>;
+type CommitHandler = () => void | Promise<void>;
+
+type WorkletFrame = {
+  pcm: ArrayBuffer;
+  rms: number;
+  durationMs: number;
+};
 
 export class AudioCapture {
   private stream: MediaStream | null = null;
-  private recorder: MediaRecorder | null = null;
+  private context: AudioContext | null = null;
+  private sourceNode: MediaStreamAudioSourceNode | null = null;
+  private workletNode: AudioWorkletNode | null = null;
+  private silentSink: GainNode | null = null;
+  private preRoll: AudioChunkPayload[] = [];
+  private speechActive = false;
+  private silenceMs = 0;
+  private utteranceMs = 0;
+  private noiseFloor = 0.002;
+  private onCommit: CommitHandler | null = null;
 
-  async start(settings: AppSettings, onChunk: ChunkHandler): Promise<void> {
-    if (this.recorder?.state === 'recording') return;
+  async start(settings: AppSettings, onChunk: ChunkHandler, onCommit: CommitHandler): Promise<void> {
+    if (this.context) return;
 
     this.stream = await this.createStream(settings.captureSource);
-    const mimeType = this.pickMimeType();
-    this.recorder = new MediaRecorder(this.stream, mimeType ? { mimeType } : undefined);
+    this.onCommit = onCommit;
+    this.context = new AudioContext({ latencyHint: 'interactive' });
+    await this.context.audioWorklet.addModule(new URL('./pcmCapture.worklet.js', import.meta.url));
 
-    this.recorder.ondataavailable = async (event) => {
-      if (!event.data || event.data.size === 0) return;
-      const buffer = await event.data.arrayBuffer();
-      await onChunk({
-        base64: arrayBufferToBase64(buffer),
-        mimeType: event.data.type || mimeType || 'audio/webm',
-      });
+    this.sourceNode = this.context.createMediaStreamSource(this.stream);
+    this.workletNode = new AudioWorkletNode(this.context, 'repglass-pcm-capture');
+    this.silentSink = this.context.createGain();
+    this.silentSink.gain.value = 0;
+
+    this.workletNode.port.onmessage = (event: MessageEvent<WorkletFrame>) => {
+      this.handleFrame(event.data, settings.captureSource, onChunk);
     };
 
-    this.recorder.start(settings.chunkMs);
+    this.sourceNode.connect(this.workletNode);
+    this.workletNode.connect(this.silentSink);
+    this.silentSink.connect(this.context.destination);
+    await this.context.resume();
   }
 
   stop(): void {
-    if (this.recorder && this.recorder.state !== 'inactive') {
-      this.recorder.stop();
-    }
+    if (this.speechActive) void this.onCommit?.();
+    this.workletNode?.disconnect();
+    this.sourceNode?.disconnect();
+    this.silentSink?.disconnect();
+    void this.context?.close();
     this.stream?.getTracks().forEach((track) => track.stop());
     this.stream = null;
-    this.recorder = null;
+    this.context = null;
+    this.sourceNode = null;
+    this.workletNode = null;
+    this.silentSink = null;
+    this.preRoll = [];
+    this.speechActive = false;
+    this.silenceMs = 0;
+    this.utteranceMs = 0;
+    this.onCommit = null;
+  }
+
+  private handleFrame(frame: WorkletFrame, source: AppSettings['captureSource'], onChunk: ChunkHandler): void {
+    const payload: AudioChunkPayload = {
+      base64: arrayBufferToBase64(frame.pcm),
+      sampleRate: 24_000,
+    };
+    const minimumThreshold = source === 'system' ? 0.003 : 0.008;
+    const threshold = Math.max(minimumThreshold, this.noiseFloor * 3);
+    const hasVoice = frame.rms >= threshold;
+
+    if (!this.speechActive) {
+      if (!hasVoice) this.noiseFloor = this.noiseFloor * 0.95 + frame.rms * 0.05;
+      this.preRoll.push(payload);
+      this.preRoll = this.preRoll.slice(-4);
+      if (!hasVoice) return;
+
+      this.speechActive = true;
+      this.silenceMs = 0;
+      this.utteranceMs = this.preRoll.length * frame.durationMs;
+      for (const buffered of this.preRoll) void onChunk(buffered);
+      this.preRoll = [];
+      return;
+    }
+
+    void onChunk(payload);
+    this.utteranceMs += frame.durationMs;
+    this.silenceMs = hasVoice ? 0 : this.silenceMs + frame.durationMs;
+
+    if (this.silenceMs >= 700 || this.utteranceMs >= 12_000) {
+      void this.onCommit?.();
+      this.speechActive = false;
+      this.silenceMs = 0;
+      this.utteranceMs = 0;
+      this.preRoll = [];
+    }
   }
 
   private async createStream(source: AppSettings['captureSource']): Promise<MediaStream> {
@@ -52,15 +118,6 @@ export class AudioCapture {
     });
   }
 
-  private pickMimeType(): string {
-    const candidates = [
-      'audio/webm;codecs=opus',
-      'audio/webm',
-      'audio/ogg;codecs=opus',
-      'audio/mp4',
-    ];
-    return candidates.find((candidate) => MediaRecorder.isTypeSupported(candidate)) || '';
-  }
 }
 
 function arrayBufferToBase64(buffer: ArrayBuffer): string {

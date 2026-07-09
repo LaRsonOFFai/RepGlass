@@ -4,12 +4,12 @@ export const DEFAULT_SETTINGS: AppSettings = {
   answerProvider: 'codex',
   model: 'gpt-4.1-mini',
   codexModel: 'gpt-5.5',
-  transcriptionModel: 'gpt-4o-mini-transcribe',
+  transcriptionModel: 'gpt-realtime-whisper',
   language: 'ru',
   captureSource: 'microphone',
   autoAnswer: true,
   answerCooldownMs: 12000,
-  chunkMs: 6500,
+  chunkMs: 100,
   startInTray: false,
 };
 

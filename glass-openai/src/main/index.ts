@@ -10,6 +10,14 @@ import type { AppSettings, AudioChunkPayload } from './types';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const APP_NAME = 'RepGlass';
+const TRUSTED_EXTERNAL_ORIGINS = new Set([
+  'https://auth.openai.com',
+  'https://chatgpt.com',
+  'https://github.com',
+  'https://help.openai.com',
+  'https://openai.com',
+  'https://platform.openai.com',
+]);
 
 if (!app.isPackaged) {
   app.setPath('userData', path.join(app.getPath('appData'), `${APP_NAME} Dev`));
@@ -266,6 +274,14 @@ function hideOverlay() {
   updateTrayMenu();
 }
 
+async function openTrustedExternal(rawUrl: string): Promise<void> {
+  const url = new URL(rawUrl);
+  if (url.protocol !== 'https:' || !TRUSTED_EXTERNAL_ORIGINS.has(url.origin)) {
+    throw new Error('Blocked untrusted external URL');
+  }
+  await shell.openExternal(url.toString());
+}
+
 function updateTrayMenu() {
   if (!tray) return;
   const visible = Boolean(mainWindow && !mainWindow.isDestroyed() && mainWindow.isVisible());
@@ -378,10 +394,16 @@ function registerIpc() {
   ipcMain.handle('settings:get', () => store.getSettings());
   ipcMain.handle('settings:update', (_event, patch: Partial<AppSettings>) => store.updateSettings(patch));
 
-  ipcMain.handle('listen:start', () => {
-    runtime.start();
-    updateTrayMenu();
-    return { success: true };
+  ipcMain.handle('listen:start', async () => {
+    try {
+      await runtime.start();
+      updateTrayMenu();
+      return { success: true };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Could not start realtime transcription';
+      console.error('[Main] Realtime transcription start failed:', error);
+      return { success: false, error: message };
+    }
   });
 
   ipcMain.handle('listen:stop', () => {
@@ -390,16 +412,14 @@ function registerIpc() {
     return { success: true };
   });
 
-  ipcMain.handle('listen:audioChunk', async (_event, payload: AudioChunkPayload) => {
-    await runtime.handleAudioChunk(payload);
-    return { success: true };
-  });
+  ipcMain.on('listen:audioChunk', (_event, payload: AudioChunkPayload) => runtime.handleAudioChunk(payload));
+  ipcMain.on('listen:commit', () => runtime.commitAudio());
 
   ipcMain.handle('ask:send', async (_event, question: string) => runtime.ask(question));
 
   ipcMain.handle('window:hide', () => hideOverlay());
   ipcMain.handle('window:show', () => showOverlay());
-  ipcMain.handle('window:openExternal', (_event, url: string) => shell.openExternal(url));
+  ipcMain.handle('window:openExternal', (_event, url: string) => openTrustedExternal(url));
 }
 
 app.whenReady().then(() => {

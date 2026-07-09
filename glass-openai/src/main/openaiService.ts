@@ -1,4 +1,4 @@
-import OpenAI, { toFile } from 'openai';
+import OpenAI from 'openai';
 import { SYSTEM_PROMPT } from './defaults';
 import type { AppSettings } from './types';
 
@@ -19,25 +19,6 @@ export class OpenAIService {
     } catch (error) {
       return { success: false, error: error instanceof Error ? error.message : 'Network error' };
     }
-  }
-
-  async transcribeAudio(params: {
-    apiKey: string;
-    audio: Buffer;
-    mimeType: string;
-    settings: AppSettings;
-  }): Promise<string> {
-    const client = new OpenAI({ apiKey: params.apiKey });
-    const extension = this.extensionForMime(params.mimeType);
-    const file = await toFile(params.audio, `audio.${extension}`, { type: params.mimeType });
-
-    const transcription = await client.audio.transcriptions.create({
-      file,
-      model: params.settings.transcriptionModel,
-      language: params.settings.language || undefined,
-    });
-
-    return (transcription.text || '').trim();
   }
 
   async answerQuestion(params: {
@@ -93,11 +74,4 @@ export class OpenAIService {
     return text || 'No answer returned.';
   }
 
-  private extensionForMime(mimeType: string): string {
-    if (mimeType.includes('mp4')) return 'mp4';
-    if (mimeType.includes('mpeg')) return 'mp3';
-    if (mimeType.includes('wav')) return 'wav';
-    if (mimeType.includes('ogg')) return 'ogg';
-    return 'webm';
-  }
 }

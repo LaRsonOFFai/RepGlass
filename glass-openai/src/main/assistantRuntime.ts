@@ -2,6 +2,7 @@ import type { WebContents } from 'electron';
 import { CodexService } from './codexService';
 import { OpenAIService } from './openaiService';
 import { shouldAutoAnswer, signatureFor } from './questionDetector';
+import { RealtimeTranscriptionService } from './realtimeTranscriptionService';
 import type { AnswerPayload, AppSettings, AudioChunkPayload, TranscriptTurn } from './types';
 
 type RuntimeDeps = {
@@ -13,23 +14,47 @@ type RuntimeDeps = {
 export class AssistantRuntime {
   private readonly openai = new OpenAIService();
   private readonly codex = new CodexService();
+  private readonly realtime = new RealtimeTranscriptionService();
   private readonly transcript: TranscriptTurn[] = [];
   private listening = false;
-  private processingAudio = false;
   private processingAnswer = false;
   private lastSignature = '';
   private lastAnswerAt = 0;
 
   constructor(private readonly deps: RuntimeDeps) {}
 
-  start(): void {
+  async start(): Promise<void> {
+    if (this.listening) return;
+
+    const apiKey = this.deps.getApiKey();
+    if (!apiKey) throw new Error('OpenAI API key required for realtime transcription');
+
+    const settings = this.deps.getSettings();
+    this.emit('status', 'Connecting realtime transcription');
+    await this.realtime.start({
+      apiKey,
+      language: settings.language,
+      callbacks: {
+        onPartial: (itemId, text) => this.emitTranscript(itemId, text, true),
+        onFinal: (itemId, text) => void this.handleFinalTranscript(itemId, text),
+        onError: (message) => this.emit('error', message),
+        onClose: () => {
+          if (!this.listening) return;
+          this.listening = false;
+          this.emit('listen:state', { listening: false });
+          this.emit('status', 'Realtime transcription disconnected');
+        },
+      },
+    });
+
     this.listening = true;
     this.emit('listen:state', { listening: true });
-    this.emit('status', 'Listening');
+    this.emit('status', 'Listening live');
   }
 
   stop(): void {
     this.listening = false;
+    this.realtime.stop(true);
     this.emit('listen:state', { listening: false });
     this.emit('status', 'Paused');
   }
@@ -38,48 +63,14 @@ export class AssistantRuntime {
     return this.listening;
   }
 
-  async handleAudioChunk(payload: AudioChunkPayload): Promise<void> {
-    if (!this.listening || this.processingAudio) return;
+  handleAudioChunk(payload: AudioChunkPayload): void {
+    if (!this.listening) return;
+    this.realtime.appendAudio(payload);
+  }
 
-    const apiKey = this.deps.getApiKey();
-    if (!apiKey) {
-      this.emit('status', 'OpenAI STT key required');
-      return;
-    }
-
-    this.processingAudio = true;
-    try {
-      this.emit('status', 'Transcribing');
-      const settings = this.deps.getSettings();
-      const text = await this.openai.transcribeAudio({
-        apiKey,
-        audio: Buffer.from(payload.base64, 'base64'),
-        mimeType: payload.mimeType,
-        settings,
-      });
-
-      if (!text) return;
-
-      const turn: TranscriptTurn = {
-        id: crypto.randomUUID(),
-        speaker: 'audio',
-        text,
-        createdAt: Date.now(),
-      };
-      this.transcript.push(turn);
-      this.emit('listen:transcript', turn);
-      this.emit('status', 'Listening');
-
-      if (settings.autoAnswer) {
-        await this.maybeAnswer(text);
-      }
-    } catch (error) {
-      console.error('[AssistantRuntime] Audio processing failed:', error);
-      this.emit('error', error instanceof Error ? error.message : 'Audio processing failed');
-      this.emit('status', 'Listening');
-    } finally {
-      this.processingAudio = false;
-    }
+  commitAudio(): void {
+    if (!this.listening) return;
+    this.realtime.commit();
   }
 
   async ask(question: string): Promise<AnswerPayload> {
@@ -100,6 +91,34 @@ export class AssistantRuntime {
     if (now - this.lastAnswerAt < settings.answerCooldownMs) return;
 
     await this.answer(text);
+  }
+
+  private emitTranscript(id: string, text: string, partial: boolean): void {
+    if (!text) return;
+    this.emit('listen:transcript', {
+      id,
+      speaker: 'audio',
+      text,
+      createdAt: Date.now(),
+      partial,
+    } satisfies TranscriptTurn);
+  }
+
+  private async handleFinalTranscript(id: string, text: string): Promise<void> {
+    const turn: TranscriptTurn = {
+      id,
+      speaker: 'audio',
+      text,
+      createdAt: Date.now(),
+      partial: false,
+    };
+    this.transcript.push(turn);
+    this.emit('listen:transcript', turn);
+    this.emit('status', this.listening ? 'Listening live' : 'Paused');
+
+    if (this.deps.getSettings().autoAnswer) {
+      await this.maybeAnswer(text);
+    }
   }
 
   private async answer(question: string): Promise<AnswerPayload> {

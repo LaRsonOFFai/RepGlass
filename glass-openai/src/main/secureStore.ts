@@ -75,7 +75,11 @@ export class SecureStore {
 
   getSettings(): AppSettings {
     const store = this.read();
-    return { ...DEFAULT_SETTINGS, ...store.settings };
+    const settings = { ...DEFAULT_SETTINGS, ...store.settings };
+    if (settings.transcriptionModel !== 'gpt-realtime-whisper') {
+      settings.transcriptionModel = 'gpt-realtime-whisper';
+    }
+    return settings;
   }
 
   updateSettings(patch: Partial<AppSettings>): AppSettings {

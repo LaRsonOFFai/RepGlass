@@ -26,7 +26,7 @@ export type AuthState = {
 
 export type AudioChunkPayload = {
   base64: string;
-  mimeType: string;
+  sampleRate: number;
 };
 
 export type TranscriptTurn = {
@@ -34,6 +34,7 @@ export type TranscriptTurn = {
   speaker: 'audio';
   text: string;
   createdAt: number;
+  partial?: boolean;
 };
 
 export type AnswerPayload = {
