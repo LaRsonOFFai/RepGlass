@@ -6,6 +6,8 @@
     "main": "src/index.js",
     "scripts": {
         "setup": "npm install && cd pickleglass_web && npm install && npm run build && cd .. && npm start",
+        "setup:win": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/setup-windows.ps1",
+        "setup:win:no-start": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/setup-windows.ps1 -NoStart",
         "start": "npm run build:renderer && electron .",
         "start:hidden": "wscript Start-RepGlass-hidden.vbs",
         "shortcut:hidden": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/create-hidden-shortcut.ps1",
