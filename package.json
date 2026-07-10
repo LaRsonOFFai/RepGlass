@@ -1,84 +1,31 @@
 {
-    "name": "repglass",
-    "productName": "RepGlass",
-    "version": "0.2.4",
-    "description": "A translucent OpenAI Codex-powered live assistant",
-    "main": "src/index.js",
-    "scripts": {
-        "setup": "npm install && cd pickleglass_web && npm install && npm run build && cd .. && npm start",
-        "setup:win": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/setup-windows.ps1",
-        "setup:win:no-start": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/setup-windows.ps1 -NoStart",
-        "start": "npm run build:renderer && electron .",
-        "start:hidden": "wscript Start-RepGlass-hidden.vbs",
-        "shortcut:hidden": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/create-hidden-shortcut.ps1",
-        "package": "npm run build:all && electron-builder --dir",
-        "make": "npm run build:renderer && electron-forge make",
-        "build": "npm run build:all && electron-builder --config electron-builder.yml --publish never",
-        "build:win": "npm run build:all && electron-builder --win --x64 --publish never",
-        "publish": "npm run build:all && electron-builder --config electron-builder.yml --publish always",
-        "lint": "eslint --ext .ts,.tsx,.js .",
-        "postinstall": "electron-builder install-app-deps",
-        "build:renderer": "node build.js",
-        "build:web": "cd pickleglass_web && npm run build && cd ..",
-        "build:all": "npm run build:renderer && npm run build:web",
-        "watch:renderer": "node build.js --watch"
-    },
-    "keywords": [
-        "glass",
-        "pickle glass",
-        "ai assistant",
-        "real-time",
-        "live summary",
-        "contextual ai"
-    ],
-    "author": {
-        "name": "RepGlass"
-    },
-    "license": "GPL-3.0",
-    "engines": {
-        "node": ">=24.0.0",
-        "npm": ">=11.0.0"
-    },
-    "packageManager": "npm@11.12.1",
-    "dependencies": {
-        "@anthropic-ai/sdk": "^0.110.0",
-        "@google/genai": "^2.10.0",
-        "@google/generative-ai": "^0.24.1",
-        "axios": "^1.18.1",
-        "better-sqlite3": "^12.11.1",
-        "cors": "^2.8.6",
-        "dotenv": "^17.4.2",
-        "electron-squirrel-startup": "^1.0.1",
-        "electron-store": "^8.2.0",
-        "electron-updater": "^6.8.9",
-        "express": "^4.22.2",
-        "firebase": "^12.15.0",
-        "firebase-admin": "^14.1.0",
-        "jsonwebtoken": "^9.0.3",
-        "keytar": "^7.9.0",
-        "node-fetch": "^2.7.0",
-        "openai": "^6.45.0",
-        "react-hot-toast": "^2.6.0",
-        "sharp": "^0.35.3",
-        "validator": "^13.15.35",
-        "wait-on": "^9.0.10",
-        "ws": "^8.21.0"
-    },
-    "devDependencies": {
-        "@electron/fuses": "^2.1.3",
-        "@electron/notarize": "^3.1.1",
-        "electron": "^43.0.0",
-        "electron-builder": "^26.15.3",
-        "electron-reloader": "^1.2.3",
-        "esbuild": "^0.28.1",
-        "prettier": "^3.9.4"
-    },
-    "optionalDependencies": {
-        "electron-liquid-glass": "^1.0.1"
-    },
-    "overrides": {
-        "gaxios": "^7.1.5",
-        "retry-request": "^8.0.3",
-        "teeny-request": "^10.1.3"
-    }
+  "name": "repglass-workspace",
+  "productName": "RepGlass",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Modern translucent live assistant powered by OpenAI Codex and Realtime transcription.",
+  "scripts": {
+    "setup": "npm run setup:win",
+    "setup:win": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/setup-windows.ps1",
+    "setup:win:no-start": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/setup-windows.ps1 -NoStart",
+    "dev": "npm --prefix app run dev",
+    "start": "npm --prefix app run start",
+    "start:hidden": "wscript Start-RepGlass-hidden.vbs",
+    "shortcut:hidden": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/create-hidden-shortcut.ps1",
+    "typecheck": "npm --prefix app run typecheck",
+    "lint": "npm --prefix app run lint",
+    "test": "npm --prefix app run test",
+    "test:e2e": "npm --prefix app run test:e2e",
+    "smoke:packaged": "npm --prefix app run smoke:packaged",
+    "verify": "npm --prefix app run verify",
+    "build": "npm --prefix app run build",
+    "build:win": "npm --prefix app run dist",
+    "audit:app": "npm --prefix app audit --omit=dev"
+  },
+  "engines": {
+    "node": ">=24.0.0",
+    "npm": ">=11.0.0"
+  },
+  "packageManager": "npm@11.12.1",
+  "license": "GPL-3.0"
 }
