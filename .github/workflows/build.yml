@@ -1,47 +1,67 @@
-name: Build & Verify
+name: Build and verify RepGlass
 
 on:
   push:
-    branches: ["main"]
+    branches: [main]
   pull_request:
-    branches: ["main"]
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: repglass-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  build:
+  windows:
     runs-on: windows-latest
-    env:
-      SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK_URL }}
+    timeout-minutes: 30
 
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v6
 
-      - name: Setup Node.js environment
-        uses: actions/setup-node@v4
+      - name: Set up Node.js 24
+        uses: actions/setup-node@v6
         with:
-          node-version: "24.x"
-          cache: "npm"
+          node-version: 24.x
+          cache: npm
+          cache-dependency-path: app/package-lock.json
 
-      - name: Install root dependencies
+      - name: Install dependencies
+        working-directory: app
         run: npm ci
 
-      - name: Install and build web part
-        working-directory: ./pickleglass_web
-        run: |
-          npm ci
-          npm run build
+      - name: Typecheck, unit tests, and production build
+        working-directory: app
+        run: npm run verify
 
-      - name: Build Electron app
+      - name: Electron interface tests
+        working-directory: app
+        run: npm run test:e2e
+
+      - name: Production dependency audit
+        working-directory: app
+        run: npm audit --omit=dev
+
+      - name: Build Windows installer and portable app
+        working-directory: app
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: false
-          ELECTRON_BUILDER_ALLOW_UNRESOLVED_DEPENDENCIES: true
-        run: npm run build:win
+        run: npm run dist
 
-      - name: Send failure notification to Slack
-        if: failure() && env.SLACK_WEBHOOK != ''
-        uses: rtCamp/action-slack-notify@v2
-        env:
-          SLACK_CHANNEL: general
-          SLACK_TITLE: "Build Failed"
-          SLACK_MESSAGE: "Build failed for `${{ github.repository }}` on main."
-          SLACK_COLOR: "danger"
+      - name: Smoke-test packaged application
+        working-directory: app
+        run: npm run smoke:packaged
+
+      - name: Upload Windows packages
+        uses: actions/upload-artifact@v6
+        with:
+          name: RepGlass-Windows
+          path: |
+            app/release/*.exe
+            app/release/*.yml
+          if-no-files-found: error
+          retention-days: 14

@@ -7,9 +7,9 @@ param(
 $ErrorActionPreference = 'Stop'
 
 $ProjectRoot = Split-Path -Parent $PSScriptRoot
-$WebRoot = Join-Path $ProjectRoot 'pickleglass_web'
-$HiddenLauncher = Join-Path $ProjectRoot 'Start-RepGlass-hidden.vbs'
+$AppRoot = Join-Path $ProjectRoot 'app'
 $ShortcutScript = Join-Path $PSScriptRoot 'create-hidden-shortcut.ps1'
+$PackagedApp = Join-Path $AppRoot 'release\win-unpacked\RepGlass.exe'
 
 function Invoke-Step {
     param(
@@ -26,7 +26,7 @@ function Invoke-Npm {
     param(
         [string]$Title,
         [string[]]$Arguments,
-        [string]$WorkingDirectory = $ProjectRoot
+    [string]$WorkingDirectory = $AppRoot
     )
 
     Invoke-Step $Title {
@@ -42,8 +42,8 @@ function Invoke-Npm {
     }
 }
 
-if (!(Test-Path $WebRoot)) {
-    throw "Web project folder not found: $WebRoot"
+if (!(Test-Path (Join-Path $AppRoot 'package.json'))) {
+    throw "Modern app folder not found: $AppRoot"
 }
 
 Invoke-Step 'Checking required tools' {
@@ -55,15 +55,15 @@ Invoke-Step 'Checking required tools' {
 }
 
 if (!$SkipInstall) {
-    Invoke-Npm 'Installing root dependencies' @('install') $ProjectRoot
-    Invoke-Npm 'Installing web dependencies' @('install') $WebRoot
+    Invoke-Npm 'Installing RepGlass dependencies' @('install') $AppRoot
 }
 
 if (!$SkipBuild) {
-    Invoke-Npm 'Building renderer and web assets' @('run', 'build:all') $ProjectRoot
+    Invoke-Npm 'Verifying RepGlass' @('run', 'verify') $AppRoot
+    Invoke-Npm 'Building Windows installer and portable application' @('run', 'dist') $AppRoot
 }
 
-Invoke-Step 'Creating hidden startup desktop shortcut' {
+Invoke-Step 'Creating RepGlass desktop shortcut' {
     & powershell -NoProfile -ExecutionPolicy Bypass -File $ShortcutScript
     if ($LASTEXITCODE -ne 0) {
         throw "Shortcut creation failed with exit code $LASTEXITCODE"
@@ -71,18 +71,23 @@ Invoke-Step 'Creating hidden startup desktop shortcut' {
 }
 
 if (!$NoStart) {
-    Invoke-Step 'Starting RepGlass hidden' {
-        if (!(Test-Path $HiddenLauncher)) {
-            throw "Hidden launcher not found: $HiddenLauncher"
+    Invoke-Step 'Starting RepGlass' {
+        if (Test-Path $PackagedApp) {
+            Start-Process -FilePath $PackagedApp `
+                -WorkingDirectory (Split-Path -Parent $PackagedApp)
+        } else {
+            $HiddenLauncher = Join-Path $ProjectRoot 'Start-RepGlass-hidden.vbs'
+            if (!(Test-Path $HiddenLauncher)) {
+                throw "RepGlass launcher not found: $HiddenLauncher"
+            }
+            Start-Process -FilePath (Join-Path $env:WINDIR 'System32\wscript.exe') `
+                -ArgumentList "`"$HiddenLauncher`"" `
+                -WorkingDirectory $ProjectRoot `
+                -WindowStyle Hidden
         }
-
-        Start-Process -FilePath (Join-Path $env:WINDIR 'System32\wscript.exe') `
-            -ArgumentList "`"$HiddenLauncher`"" `
-            -WorkingDirectory $ProjectRoot `
-            -WindowStyle Hidden
     }
 }
 
 Write-Host ""
 Write-Host 'RepGlass setup is complete.'
-Write-Host 'Use the "RepGlass Hidden" desktop shortcut or run: npm run start:hidden'
+Write-Host 'Use the "RepGlass" desktop shortcut. Installers are in app\release.'
