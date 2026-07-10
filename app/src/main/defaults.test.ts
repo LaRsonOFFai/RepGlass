@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_SETTINGS, buildAssistantInstructions, normalizeSettings } from './defaults';
+import {
+  DEFAULT_SETTINGS,
+  SETTINGS_SCHEMA_VERSION,
+  buildAssistantInstructions,
+  migrateSettings,
+  normalizeSettings,
+} from './defaults';
 
 describe('settings', () => {
   it('migrates incomplete and invalid settings', () => {
@@ -22,5 +28,14 @@ describe('settings', () => {
     );
     expect(prompt).toContain('senior AQA');
     expect(prompt).toContain('Playwright');
+  });
+
+  it('uses both audio sources and migrates the previous system-only default once', () => {
+    expect(DEFAULT_SETTINGS.captureSource).toBe('both');
+    expect(normalizeSettings(migrateSettings({ captureSource: 'system' }, 1)).captureSource).toBe('both');
+    expect(
+      normalizeSettings(migrateSettings({ captureSource: 'system' }, SETTINGS_SCHEMA_VERSION)).captureSource,
+    ).toBe('system');
+    expect(normalizeSettings({ captureSource: 'microphone' }).captureSource).toBe('microphone');
   });
 });

@@ -48,9 +48,13 @@ test('opens transcript and every personalization section', async ({ browserName:
   await expect(page.getByText('Транскрипция пуста')).toBeVisible();
 
   await page.getByRole('button', { name: 'Настройки', exact: true }).first().click();
-  for (const section of ['Подключение', 'Профиль', 'Аудио', 'Приватность']) {
+  for (const section of ['Подключение', 'Профиль']) {
     await page.getByRole('button', { name: section }).click();
   }
+  await page.getByRole('button', { name: 'Аудио' }).click();
+  await expect(page.getByRole('button', { name: 'Оба источника' })).toHaveClass(/active/);
+  await page.screenshot({ path: testInfo.outputPath('repglass-audio.png') });
+  await page.getByRole('button', { name: 'Приватность' }).click();
   await expect(page.getByText('Ключ API шифруется через Windows DPAPI.')).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath('repglass-settings.png') });
 });
