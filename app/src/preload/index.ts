@@ -4,9 +4,12 @@ import type {
   AnswerPayload,
   AppSettings,
   AskRequest,
-  AudioChunkPayload,
   AuthState,
+  AudioInputSource,
+  LabeledAudioChunkPayload,
   ScreenCapturePayload,
+  SessionStatePayload,
+  SessionSummaryPayload,
   TranscriptTurn,
 } from '../main/types';
 import type { CodexLoginStatus, CodexModel } from '../main/codexService';
@@ -37,14 +40,17 @@ const api = {
   listen: {
     start: (): Promise<{ success: boolean; error?: string }> => ipcRenderer.invoke('listen:start'),
     stop: (): Promise<{ success: boolean }> => ipcRenderer.invoke('listen:stop'),
-    sendAudioChunk: (payload: AudioChunkPayload): void => ipcRenderer.send('listen:audioChunk', payload),
-    commitAudio: (): void => ipcRenderer.send('listen:commit'),
+    sendAudioChunk: (payload: LabeledAudioChunkPayload): void => ipcRenderer.send('listen:audioChunk', payload),
+    commitAudio: (source: AudioInputSource): void => ipcRenderer.send('listen:commit', source),
   },
   ask: {
     send: (request: AskRequest | string): Promise<AnswerPayload> => ipcRenderer.invoke('ask:send', request),
     latest: (includeScreen = false): Promise<AnswerPayload> => ipcRenderer.invoke('ask:latest', includeScreen),
+    smart: (typedQuestion = ''): Promise<AnswerPayload> => ipcRenderer.invoke('ask:smart', typedQuestion),
   },
   session: {
+    getState: (): Promise<SessionStatePayload> => ipcRenderer.invoke('session:getState'),
+    summarize: (): Promise<SessionSummaryPayload> => ipcRenderer.invoke('session:summarize'),
     clear: (): Promise<void> => ipcRenderer.invoke('session:clear'),
   },
   screen: {
@@ -65,9 +71,13 @@ const api = {
     onAnswer: (listener: Listener<AnswerPayload>) => on('ask:answer', listener),
     onScreenPreview: (listener: Listener<ScreenCapturePayload>) => on('screen:preview', listener),
     onListenToggleRequested: (listener: Listener<Record<string, never>>) => on('listen:toggle-requested', listener),
-    onNavigation: (listener: Listener<{ view: 'answers' | 'transcript' | 'settings' }>) =>
+    onComposerFocusRequested: (listener: Listener<Record<string, never>>) => on('composer:focus-requested', listener),
+    onSmartSubmitRequested: (listener: Listener<Record<string, never>>) => on('ask:smart-submit-requested', listener),
+    onNavigation: (listener: Listener<{ view: 'answers' | 'transcript' | 'summary' | 'settings' }>) =>
       on('navigation:open', listener),
     onSessionCleared: (listener: Listener<Record<string, never>>) => on('session:cleared', listener),
+    onSummary: (listener: Listener<SessionSummaryPayload>) => on('session:summary', listener),
+    onSummaryState: (listener: Listener<{ loading: boolean }>) => on('session:summary-state', listener),
   },
 };
 

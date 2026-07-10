@@ -1,7 +1,7 @@
 {
   "name": "repglass-workspace",
   "productName": "RepGlass",
-  "version": "1.0.2",
+  "version": "1.1.0",
   "private": true,
   "description": "Modern translucent live assistant powered by OpenAI Codex and Realtime transcription.",
   "scripts": {

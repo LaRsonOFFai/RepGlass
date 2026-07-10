@@ -196,6 +196,11 @@ export class CodexService {
       .filter((model) => Boolean(model.id));
   }
 
+  resetConversation(): void {
+    this.threadId = null;
+    this.threadModel = null;
+  }
+
   async answerQuestion(params: {
     question: string;
     conversation: string[];
@@ -214,7 +219,7 @@ export class CodexService {
       params.imagePath ? 'К запросу приложен актуальный снимок экрана. Используй его только как визуальный контекст вопроса.' : '',
       '',
       'Недавняя транскрипция:',
-      params.conversation.slice(-20).join('\n') || 'Транскрипции пока нет.',
+      params.conversation.join('\n') || 'Транскрипции пока нет.',
       '',
       'Последний вопрос:',
       params.question,

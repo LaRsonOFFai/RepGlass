@@ -23,7 +23,9 @@ class FakeMediaStream {
 }
 
 type TestableCapture = {
-  createStreams: (source: 'both' | 'microphone' | 'system') => Promise<MediaStream[]>;
+  createStreams: (
+    source: 'both' | 'microphone' | 'system',
+  ) => Promise<Array<{ source: 'microphone' | 'system'; stream: MediaStream }>>;
 };
 
 describe('audio capture sources', () => {
@@ -42,14 +44,15 @@ describe('audio capture sources', () => {
     vi.stubGlobal('navigator', { mediaDevices: { getDisplayMedia, getUserMedia } });
 
     const capture = new AudioCapture() as unknown as TestableCapture;
-    const streams = await capture.createStreams('both');
+    const inputs = await capture.createStreams('both');
 
-    expect(streams).toHaveLength(2);
+    expect(inputs).toHaveLength(2);
     expect(getDisplayMedia).toHaveBeenCalledOnce();
     expect(getUserMedia).toHaveBeenCalledOnce();
     expect(systemVideo.stop).toHaveBeenCalledOnce();
-    expect(streams[0].getAudioTracks()).toEqual([systemAudio]);
-    expect(streams[1]).toBe(microphoneStream);
+    expect(inputs[0].source).toBe('system');
+    expect(inputs[0].stream.getAudioTracks()).toEqual([systemAudio]);
+    expect(inputs[1]).toEqual({ source: 'microphone', stream: microphoneStream });
   });
 
   it('stops system loopback if microphone capture fails', async () => {

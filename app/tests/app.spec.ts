@@ -57,13 +57,35 @@ test('opens transcript and every personalization section', async ({ browserName:
   await page.getByRole('button', { name: 'Приватность' }).click();
   await expect(page.getByText('Ключ API шифруется через Windows DPAPI.')).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath('repglass-settings.png') });
+  await page.getByRole('button', { name: 'Итоги' }).click();
+  await expect(page.getByText('Итоги текущей сессии')).toBeVisible();
+  await page.waitForTimeout(120);
+  await page.screenshot({ path: testInfo.outputPath('repglass-summary.png') });
 });
 
 test('captures a protected screen preview in the same window', async ({ browserName: _browserName }, testInfo) => {
   await page.getByRole('button', { name: 'Ответы' }).click();
+  const visibilitySamples = electronApp.evaluate(async ({ BrowserWindow }) => {
+    const samples: boolean[] = [];
+    for (let index = 0; index < 50; index += 1) {
+      samples.push(Boolean(BrowserWindow.getAllWindows()[0]?.isVisible()));
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    return samples;
+  });
   await page.getByTitle('Добавить экран к запросу').click();
   const preview = page.locator('.composer-preview');
   await expect(preview).toBeVisible();
+  expect(await visibilitySamples).toContain(false);
+  const windowState = await electronApp.evaluate(({ BrowserWindow }) => ({
+    visible: BrowserWindow.getAllWindows()[0]?.isVisible(),
+    focusable: BrowserWindow.getAllWindows()[0]?.isFocusable(),
+  }));
+  expect(windowState).toEqual({ visible: true, focusable: true });
+  const input = page.getByPlaceholder('Задать вопрос...');
+  await input.fill('Проверка текстового Ask');
+  await expect(input).toHaveValue('Проверка текстового Ask');
+  await expect(input).toHaveAttribute('title', /Ctrl\+Shift\+Q.*Ctrl\+Enter/);
   await expect(preview).toHaveAttribute('src', /^data:image\/png;base64,/);
   expect(electronApp.windows()).toHaveLength(1);
   await page.screenshot({ path: testInfo.outputPath('repglass-screen-context.png') });
