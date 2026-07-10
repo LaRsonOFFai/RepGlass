@@ -1,3 +1,5 @@
+/* global AudioWorkletProcessor, sampleRate, registerProcessor */
+
 class RepGlassPcmCapture extends AudioWorkletProcessor {
   constructor() {
     super();
