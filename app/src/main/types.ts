@@ -45,9 +45,15 @@ export type AudioChunkPayload = {
   sampleRate: number;
 };
 
+export type AudioInputSource = 'microphone' | 'system';
+
+export type LabeledAudioChunkPayload = AudioChunkPayload & {
+  source: AudioInputSource;
+};
+
 export type TranscriptTurn = {
   id: string;
-  speaker: 'audio';
+  speaker: 'me' | 'them';
   text: string;
   createdAt: number;
   partial?: boolean;
@@ -74,4 +80,18 @@ export type AskRequest = {
 export type ScreenCapturePayload = {
   dataUrl: string;
   displayName: string;
+};
+
+export type SessionSummaryPayload = {
+  text: string;
+  createdAt: number;
+  partial?: boolean;
+  transcriptCount: number;
+  answerCount: number;
+};
+
+export type SessionStatePayload = {
+  transcript: TranscriptTurn[];
+  answers: AnswerPayload[];
+  summary: SessionSummaryPayload | null;
 };

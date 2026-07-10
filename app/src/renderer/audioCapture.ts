@@ -1,7 +1,7 @@
-import type { AppSettings, AudioChunkPayload } from '../main/types';
+import type { AppSettings, AudioChunkPayload, AudioInputSource } from '../main/types';
 
-type ChunkHandler = (payload: AudioChunkPayload) => void | Promise<void>;
-type CommitHandler = () => void | Promise<void>;
+type ChunkHandler = (source: AudioInputSource, payload: AudioChunkPayload) => void | Promise<void>;
+type CommitHandler = (source: AudioInputSource) => void | Promise<void>;
 
 type WorkletFrame = {
   pcm: ArrayBuffer;
@@ -9,52 +9,58 @@ type WorkletFrame = {
   durationMs: number;
 };
 
+type CaptureInput = {
+  source: AudioInputSource;
+  stream: MediaStream;
+};
+
+type CapturePipeline = {
+  sourceNode: MediaStreamAudioSourceNode;
+  workletNode: AudioWorkletNode;
+};
+
+type VoiceState = {
+  preRoll: AudioChunkPayload[];
+  speechActive: boolean;
+  silenceMs: number;
+  utteranceMs: number;
+  noiseFloor: number;
+};
+
 export class AudioCapture {
-  private streams: MediaStream[] = [];
+  private inputs: CaptureInput[] = [];
   private context: AudioContext | null = null;
-  private sourceNodes: MediaStreamAudioSourceNode[] = [];
-  private mixNodes: GainNode[] = [];
-  private workletNode: AudioWorkletNode | null = null;
+  private pipelines: CapturePipeline[] = [];
   private silentSink: GainNode | null = null;
-  private preRoll: AudioChunkPayload[] = [];
-  private speechActive = false;
-  private silenceMs = 0;
-  private utteranceMs = 0;
-  private noiseFloor = 0.0004;
+  private readonly voiceStates = new Map<AudioInputSource, VoiceState>();
   private onCommit: CommitHandler | null = null;
 
   async start(settings: AppSettings, onChunk: ChunkHandler, onCommit: CommitHandler): Promise<void> {
     if (this.context) return;
 
     try {
-      this.streams = await this.createStreams(settings.captureSource);
+      this.inputs = await this.createStreams(settings.captureSource);
       this.onCommit = onCommit;
       const context = new AudioContext({ latencyHint: 'interactive' });
       this.context = context;
       const workletUrl = new URL('./pcmCapture.worklet.js', window.location.href);
       await context.audioWorklet.addModule(workletUrl.href);
 
-      const workletNode = new AudioWorkletNode(context, 'repglass-pcm-capture');
-      this.workletNode = workletNode;
       this.silentSink = context.createGain();
       this.silentSink.gain.value = 0;
 
-      workletNode.port.onmessage = (event: MessageEvent<WorkletFrame>) => {
-        this.handleFrame(event.data, settings.captureSource, onChunk);
-      };
-
-      const inputGain = this.streams.length > 1 ? 0.68 : 1;
-      for (const stream of this.streams) {
-        const sourceNode = context.createMediaStreamSource(stream);
-        const mixNode = context.createGain();
-        mixNode.gain.value = inputGain;
-        sourceNode.connect(mixNode);
-        mixNode.connect(workletNode);
-        this.sourceNodes.push(sourceNode);
-        this.mixNodes.push(mixNode);
+      for (const input of this.inputs) {
+        const sourceNode = context.createMediaStreamSource(input.stream);
+        const workletNode = new AudioWorkletNode(context, 'repglass-pcm-capture');
+        this.voiceStates.set(input.source, this.createVoiceState());
+        workletNode.port.onmessage = (event: MessageEvent<WorkletFrame>) => {
+          this.handleFrame(input.source, event.data, onChunk);
+        };
+        sourceNode.connect(workletNode);
+        workletNode.connect(this.silentSink);
+        this.pipelines.push({ sourceNode, workletNode });
       }
 
-      workletNode.connect(this.silentSink);
       this.silentSink.connect(context.destination);
       await context.resume();
     } catch (error) {
@@ -64,74 +70,74 @@ export class AudioCapture {
   }
 
   stop(): void {
-    if (this.speechActive) void this.onCommit?.();
-    this.workletNode?.disconnect();
-    this.mixNodes.forEach((node) => node.disconnect());
-    this.sourceNodes.forEach((node) => node.disconnect());
+    for (const [source, state] of this.voiceStates) {
+      if (state.speechActive) void this.onCommit?.(source);
+    }
+    this.pipelines.forEach(({ sourceNode, workletNode }) => {
+      sourceNode.disconnect();
+      workletNode.disconnect();
+    });
     this.silentSink?.disconnect();
     void this.context?.close();
-    this.streams.forEach((stream) => stream.getTracks().forEach((track) => track.stop()));
-    this.streams = [];
+    this.inputs.forEach(({ stream }) => stream.getTracks().forEach((track) => track.stop()));
+    this.inputs = [];
     this.context = null;
-    this.sourceNodes = [];
-    this.mixNodes = [];
-    this.workletNode = null;
+    this.pipelines = [];
     this.silentSink = null;
-    this.preRoll = [];
-    this.speechActive = false;
-    this.silenceMs = 0;
-    this.utteranceMs = 0;
-    this.noiseFloor = 0.0004;
+    this.voiceStates.clear();
     this.onCommit = null;
   }
 
-  private handleFrame(frame: WorkletFrame, source: AppSettings['captureSource'], onChunk: ChunkHandler): void {
+  private handleFrame(source: AudioInputSource, frame: WorkletFrame, onChunk: ChunkHandler): void {
+    const state = this.voiceStates.get(source);
+    if (!state) return;
     const payload: AudioChunkPayload = {
       base64: arrayBufferToBase64(frame.pcm),
       sampleRate: 24_000,
     };
     const minimumThreshold = source === 'microphone' ? 0.003 : 0.0008;
-    const threshold = Math.max(minimumThreshold, this.noiseFloor * 2.2);
+    const threshold = Math.max(minimumThreshold, state.noiseFloor * 2.2);
     const hasVoice = frame.rms >= threshold;
 
-    if (!this.speechActive) {
-      if (!hasVoice) this.noiseFloor = this.noiseFloor * 0.95 + frame.rms * 0.05;
-      this.preRoll.push(payload);
-      this.preRoll = this.preRoll.slice(-6);
+    if (!state.speechActive) {
+      if (!hasVoice) state.noiseFloor = state.noiseFloor * 0.95 + frame.rms * 0.05;
+      state.preRoll.push(payload);
+      state.preRoll = state.preRoll.slice(-6);
       if (!hasVoice) return;
 
-      this.speechActive = true;
-      this.silenceMs = 0;
-      this.utteranceMs = this.preRoll.length * frame.durationMs;
-      for (const buffered of this.preRoll) void onChunk(buffered);
-      this.preRoll = [];
+      state.speechActive = true;
+      state.silenceMs = 0;
+      state.utteranceMs = state.preRoll.length * frame.durationMs;
+      for (const buffered of state.preRoll) void onChunk(source, buffered);
+      state.preRoll = [];
       return;
     }
 
-    void onChunk(payload);
-    this.utteranceMs += frame.durationMs;
-    this.silenceMs = hasVoice ? 0 : this.silenceMs + frame.durationMs;
+    void onChunk(source, payload);
+    state.utteranceMs += frame.durationMs;
+    state.silenceMs = hasVoice ? 0 : state.silenceMs + frame.durationMs;
 
-    if (this.silenceMs >= 900 || this.utteranceMs >= 15_000) {
-      void this.onCommit?.();
-      this.speechActive = false;
-      this.silenceMs = 0;
-      this.utteranceMs = 0;
-      this.preRoll = [];
+    if (state.silenceMs >= 900 || state.utteranceMs >= 15_000) {
+      void this.onCommit?.(source);
+      this.voiceStates.set(source, this.createVoiceState());
     }
   }
 
-  private async createStreams(source: AppSettings['captureSource']): Promise<MediaStream[]> {
-    if (source === 'system') return [await this.createSystemStream()];
-    if (source === 'microphone') return [await this.createMicrophoneStream()];
+  private createVoiceState(): VoiceState {
+    return { preRoll: [], speechActive: false, silenceMs: 0, utteranceMs: 0, noiseFloor: 0.0004 };
+  }
 
-    const streams: MediaStream[] = [];
+  private async createStreams(source: AppSettings['captureSource']): Promise<CaptureInput[]> {
+    if (source === 'system') return [{ source: 'system', stream: await this.createSystemStream() }];
+    if (source === 'microphone') return [{ source: 'microphone', stream: await this.createMicrophoneStream() }];
+
+    const inputs: CaptureInput[] = [];
     try {
-      streams.push(await this.createSystemStream());
-      streams.push(await this.createMicrophoneStream());
-      return streams;
+      inputs.push({ source: 'system', stream: await this.createSystemStream() });
+      inputs.push({ source: 'microphone', stream: await this.createMicrophoneStream() });
+      return inputs;
     } catch (error) {
-      streams.forEach((stream) => stream.getTracks().forEach((track) => track.stop()));
+      inputs.forEach(({ stream }) => stream.getTracks().forEach((track) => track.stop()));
       const message = error instanceof Error ? error.message : 'неизвестная ошибка аудиозахвата';
       throw new Error(`Не удалось включить системный звук и микрофон одновременно: ${message}`, { cause: error });
     }

@@ -5,7 +5,16 @@ import { OpenAIService } from './openaiService';
 import { classifyQuestion, shouldAttachScreen, shouldAutoAnswer, signatureFor } from './questionDetector';
 import { RealtimeTranscriptionService } from './realtimeTranscriptionService';
 import type { CapturedScreen } from './screenCaptureService';
-import type { AnswerPayload, AppSettings, AskRequest, AudioChunkPayload, TranscriptTurn } from './types';
+import type {
+  AnswerPayload,
+  AppSettings,
+  AskRequest,
+  AudioInputSource,
+  LabeledAudioChunkPayload,
+  SessionStatePayload,
+  SessionSummaryPayload,
+  TranscriptTurn,
+} from './types';
 
 type RuntimeDeps = {
   codex: CodexService;
@@ -18,14 +27,27 @@ type RuntimeDeps = {
 export class AssistantRuntime {
   private readonly openai = new OpenAIService();
   private readonly codex: CodexService;
-  private readonly realtime = new RealtimeTranscriptionService();
+  private readonly realtime: Record<AudioInputSource, RealtimeTranscriptionService> = {
+    microphone: new RealtimeTranscriptionService(),
+    system: new RealtimeTranscriptionService(),
+  };
   private readonly transcript: TranscriptTurn[] = [];
+  private readonly context: string[] = [];
+  private readonly answers: AnswerPayload[] = [];
+  private transcriptCount = 0;
+  private summary: SessionSummaryPayload | null = null;
+  private summaryTask: Promise<SessionSummaryPayload> | null = null;
+  private summaryTaskGeneration = -1;
+  private sessionGeneration = 0;
   private listening = false;
   private processingAnswer = false;
   private lastSignature = '';
   private lastAnswerAt = 0;
-  private reconnectAttempt = 0;
-  private reconnectTimer: NodeJS.Timeout | null = null;
+  private readonly reconnectAttempts: Record<AudioInputSource, number> = { microphone: 0, system: 0 };
+  private readonly reconnectTimers: Record<AudioInputSource, NodeJS.Timeout | null> = {
+    microphone: null,
+    system: null,
+  };
   private queuedQuestion = '';
   private queuedTimer: NodeJS.Timeout | null = null;
 
@@ -38,12 +60,17 @@ export class AssistantRuntime {
     if (!this.deps.getApiKey()) throw new Error('Для realtime-транскрипции нужен OpenAI API key');
 
     this.listening = true;
-    this.reconnectAttempt = 0;
+    this.reconnectAttempts.microphone = 0;
+    this.reconnectAttempts.system = 0;
     this.emit('listen:state', { listening: true });
     try {
-      await this.connectRealtime();
+      const sources = this.activeAudioSources();
+      await Promise.all(sources.map((source) => this.connectRealtime(source)));
     } catch (error) {
       this.listening = false;
+      this.clearReconnectTimers();
+      this.realtime.microphone.stop(false);
+      this.realtime.system.stop(false);
       this.emit('listen:state', { listening: false });
       throw error;
     }
@@ -51,8 +78,9 @@ export class AssistantRuntime {
 
   stop(): void {
     this.listening = false;
-    this.clearReconnectTimer();
-    this.realtime.stop(true);
+    this.clearReconnectTimers();
+    this.realtime.microphone.stop(true);
+    this.realtime.system.stop(true);
     this.emit('listen:state', { listening: false });
     this.emit('status', 'Прослушивание остановлено');
   }
@@ -61,12 +89,25 @@ export class AssistantRuntime {
     return this.listening;
   }
 
-  handleAudioChunk(payload: AudioChunkPayload): void {
-    if (this.listening) this.realtime.appendAudio(payload);
+  hasConversation(): boolean {
+    return this.context.length > 0;
   }
 
-  commitAudio(): void {
-    if (this.listening) this.realtime.commit();
+  getSessionState(): SessionStatePayload {
+    return {
+      transcript: this.transcript.map((turn) => ({ ...turn })),
+      answers: this.answers.map((answer) => ({ ...answer })).reverse(),
+      summary: this.summary ? { ...this.summary } : null,
+    };
+  }
+
+  handleAudioChunk(payload: LabeledAudioChunkPayload): void {
+    if (!this.listening || !this.isAudioSource(payload.source)) return;
+    this.realtime[payload.source].appendAudio(payload);
+  }
+
+  commitAudio(source: AudioInputSource): void {
+    if (this.listening && this.isAudioSource(source)) this.realtime[source].commit();
   }
 
   async ask(request: AskRequest | string): Promise<AnswerPayload> {
@@ -86,8 +127,28 @@ export class AssistantRuntime {
     return await this.answer(question, includeScreen);
   }
 
+  async askSmart(typedQuestion = ''): Promise<AnswerPayload> {
+    const typed = typedQuestion.trim();
+    if (typed) return await this.answer(typed, true);
+    const interviewerTurns = this.transcript.filter((turn) => turn.speaker === 'them');
+    const recentTurns = interviewerTurns.length ? interviewerTurns : this.transcript;
+    const recentAudio = recentTurns
+      .slice(-3)
+      .map((turn) => `${turn.speaker === 'me' ? 'Вы' : 'Собеседник'}: ${turn.text}`)
+      .join('\n')
+      .trim();
+    const question = recentAudio || 'Проанализируй актуальный снимок экрана и помоги решить видимую задачу.';
+    return await this.answer(question, true);
+  }
+
   clearSession(): void {
     this.transcript.length = 0;
+    this.context.length = 0;
+    this.answers.length = 0;
+    this.transcriptCount = 0;
+    this.summary = null;
+    this.sessionGeneration += 1;
+    this.codex.resetConversation();
     this.lastSignature = '';
     this.lastAnswerAt = 0;
     this.queuedQuestion = '';
@@ -97,45 +158,75 @@ export class AssistantRuntime {
     this.emit('status', this.listening ? 'Слушаю' : 'Готово');
   }
 
-  private async connectRealtime(): Promise<void> {
+  async summarizeSession(): Promise<SessionSummaryPayload> {
+    if (this.summaryTask && this.summaryTaskGeneration === this.sessionGeneration) return await this.summaryTask;
+    if (!this.context.length) throw new Error('В текущей сессии пока нет диалога для итогов');
+    const generation = this.sessionGeneration;
+    const task = this.createSummary(generation);
+    this.summaryTask = task;
+    this.summaryTaskGeneration = generation;
+    try {
+      return await task;
+    } finally {
+      if (this.summaryTask === task) {
+        this.summaryTask = null;
+        this.summaryTaskGeneration = -1;
+      }
+    }
+  }
+
+  private activeAudioSources(): AudioInputSource[] {
+    const source = this.deps.getSettings().captureSource;
+    if (source === 'microphone') return ['microphone'];
+    if (source === 'system') return ['system'];
+    return ['microphone', 'system'];
+  }
+
+  private isAudioSource(source: unknown): source is AudioInputSource {
+    return source === 'microphone' || source === 'system';
+  }
+
+  private async connectRealtime(source: AudioInputSource): Promise<void> {
     const apiKey = this.deps.getApiKey();
     if (!apiKey || !this.listening) return;
     const settings = this.deps.getSettings();
-    this.emit('status', this.reconnectAttempt ? 'Переподключаю транскрипцию' : 'Подключаю транскрипцию');
+    this.emit('status', this.reconnectAttempts[source] ? 'Переподключаю транскрипцию' : 'Подключаю транскрипцию');
 
-    await this.realtime.start({
+    await this.realtime[source].start({
       apiKey,
       language: settings.language,
       delay: settings.transcriptionDelay,
       callbacks: {
-        onPartial: (itemId, text) => this.emitTranscript(itemId, text, true),
-        onFinal: (itemId, text) => void this.handleFinalTranscript(itemId, text),
-        onError: (message) => this.emit('error', message),
-        onClose: () => this.scheduleReconnect(),
+        onPartial: (itemId, text) => this.emitTranscript(source, itemId, text, true),
+        onFinal: (itemId, text) => void this.handleFinalTranscript(source, itemId, text),
+        onError: (message) => this.emit('error', `${source === 'microphone' ? 'Микрофон' : 'Системный звук'}: ${message}`),
+        onClose: () => this.scheduleReconnect(source),
       },
     });
 
-    this.reconnectAttempt = 0;
+    this.reconnectAttempts[source] = 0;
     this.emit('status', 'Слушаю в реальном времени');
   }
 
-  private scheduleReconnect(): void {
-    if (!this.listening || this.reconnectTimer) return;
-    this.reconnectAttempt += 1;
-    const delay = Math.min(10_000, 1_000 * 2 ** Math.min(this.reconnectAttempt - 1, 3));
+  private scheduleReconnect(source: AudioInputSource): void {
+    if (!this.listening || this.reconnectTimers[source]) return;
+    this.reconnectAttempts[source] += 1;
+    const delay = Math.min(10_000, 1_000 * 2 ** Math.min(this.reconnectAttempts[source] - 1, 3));
     this.emit('status', `Связь потеряна, повтор через ${Math.ceil(delay / 1_000)} с`);
-    this.reconnectTimer = setTimeout(() => {
-      this.reconnectTimer = null;
-      void this.connectRealtime().catch((error) => {
+    this.reconnectTimers[source] = setTimeout(() => {
+      this.reconnectTimers[source] = null;
+      void this.connectRealtime(source).catch((error) => {
         this.emit('error', error instanceof Error ? error.message : 'Не удалось переподключить транскрипцию');
-        this.scheduleReconnect();
+        this.scheduleReconnect(source);
       });
     }, delay);
   }
 
-  private clearReconnectTimer(): void {
-    if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
-    this.reconnectTimer = null;
+  private clearReconnectTimers(): void {
+    for (const source of ['microphone', 'system'] as const) {
+      if (this.reconnectTimers[source]) clearTimeout(this.reconnectTimers[source]);
+      this.reconnectTimers[source] = null;
+    }
   }
 
   private async maybeAnswer(text: string): Promise<void> {
@@ -175,31 +266,36 @@ export class AssistantRuntime {
     }, Math.max(250, delay));
   }
 
-  private emitTranscript(id: string, text: string, partial: boolean): void {
+  private emitTranscript(source: AudioInputSource, id: string, text: string, partial: boolean): void {
     if (!text) return;
     this.emit('listen:transcript', {
-      id,
-      speaker: 'audio',
+      id: `${source}:${id}`,
+      speaker: source === 'microphone' ? 'me' : 'them',
       text,
       createdAt: Date.now(),
       partial,
     } satisfies TranscriptTurn);
   }
 
-  private async handleFinalTranscript(id: string, text: string): Promise<void> {
+  private async handleFinalTranscript(source: AudioInputSource, id: string, text: string): Promise<void> {
+    const speaker = source === 'microphone' ? 'me' : 'them';
     const turn: TranscriptTurn = {
-      id,
-      speaker: 'audio',
+      id: `${source}:${id}`,
+      speaker,
       text,
       createdAt: Date.now(),
       partial: false,
     };
     this.transcript.push(turn);
+    this.transcriptCount += 1;
     if (this.transcript.length > 100) this.transcript.splice(0, this.transcript.length - 100);
+    this.context.push(`${speaker === 'me' ? 'Вы' : 'Собеседник'}: ${text}`);
     this.emit('listen:transcript', turn);
     this.emit('status', this.listening ? 'Слушаю в реальном времени' : 'Готово');
 
-    if (this.deps.getSettings().autoAnswer) {
+    const settings = this.deps.getSettings();
+    const isQuestionSource = source === 'system' || settings.captureSource === 'microphone';
+    if (isQuestionSource && settings.autoAnswer) {
       try {
         await this.maybeAnswer(text);
       } catch (error) {
@@ -232,7 +328,7 @@ export class AssistantRuntime {
 
       const id = crypto.randomUUID();
       const category = classifyQuestion(question, Boolean(capture));
-      const conversation = this.transcript.map((turn) => turn.text);
+      const conversation = [...this.context];
       const answer =
         settings.answerProvider === 'codex'
           ? await this.codex.answerQuestion({
@@ -263,6 +359,8 @@ export class AssistantRuntime {
       };
       this.lastSignature = signatureFor(question);
       this.lastAnswerAt = Date.now();
+      this.answers.push(payload);
+      this.context.push(`Вопрос: ${question}`, `Ответ RepGlass: ${answer}`);
       this.emit('ask:answer', payload);
       this.emit('status', this.listening ? 'Слушаю' : 'Готово');
       return payload;
@@ -275,6 +373,65 @@ export class AssistantRuntime {
       this.emit('ask:state', { loading: false });
       if (this.queuedQuestion) this.scheduleQueuedAnswer();
     }
+  }
+
+  private async createSummary(generation: number): Promise<SessionSummaryPayload> {
+    await this.waitForAnswerIdle();
+    const settings = this.deps.getSettings();
+    const question = [
+      'Сформируй итоги текущего интервью на русском языке.',
+      'Структура: краткое резюме разговора; заданные вопросы; сильные ответы; ответы, которые стоит улучшить; технические темы; следующие шаги.',
+      'Не выдумывай факты и явно отмечай, если данных для раздела недостаточно.',
+    ].join(' ');
+    const conversation = [...this.context];
+    const emitPartial = (text: string) => {
+      if (generation !== this.sessionGeneration) return;
+      this.emit('session:summary', {
+        text,
+        createdAt: Date.now(),
+        partial: true,
+        transcriptCount: this.transcriptCount,
+        answerCount: this.answers.length,
+      } satisfies SessionSummaryPayload);
+    };
+
+    if (generation === this.sessionGeneration) this.emit('session:summary-state', { loading: true });
+    try {
+      const text =
+        settings.answerProvider === 'codex'
+          ? await this.codex.answerQuestion({ question, conversation, settings, onDelta: emitPartial })
+          : await this.openai.answerQuestion({
+              apiKey: this.requireApiKey(),
+              question,
+              conversation,
+              settings,
+              onDelta: emitPartial,
+            });
+      const summary: SessionSummaryPayload = {
+        text,
+        createdAt: Date.now(),
+        transcriptCount: this.transcriptCount,
+        answerCount: this.answers.length,
+      };
+      if (generation === this.sessionGeneration) {
+        this.summary = summary;
+        this.emit('session:summary', summary);
+      }
+      return summary;
+    } catch (error) {
+      if (generation === this.sessionGeneration) this.reportAnswerError(error);
+      throw error;
+    } finally {
+      if (generation === this.sessionGeneration) this.emit('session:summary-state', { loading: false });
+    }
+  }
+
+  private async waitForAnswerIdle(): Promise<void> {
+    const deadline = Date.now() + 180_000;
+    while (this.processingAnswer && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    if (this.processingAnswer) throw new Error('Не удалось дождаться завершения текущего ответа');
   }
 
   private requireApiKey(): string {

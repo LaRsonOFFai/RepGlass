@@ -372,6 +372,7 @@ button:disabled {
 
 .answer-feed,
 .transcript-feed,
+.summary-view,
 .settings-scroll {
   height: 100%;
   overflow: auto;
@@ -578,7 +579,7 @@ button:disabled {
 .transcript-item {
   min-width: 0;
   display: grid;
-  grid-template-columns: 46px minmax(0, 1fr) auto;
+  grid-template-columns: 72px 46px minmax(0, 1fr) auto;
   gap: 9px;
   align-items: start;
   padding: 11px 0;
@@ -593,6 +594,27 @@ button:disabled {
   color: rgba(244, 246, 247, 0.35);
   font-size: 10px;
   line-height: 1.55;
+}
+
+.summary-view {
+  display: grid;
+  align-content: start;
+  padding: 10px;
+}
+
+.speaker-label {
+  color: #0f1417;
+  background: #d7ff5f;
+  border-radius: 4px;
+  padding: 2px 6px;
+  font-size: 10px;
+  font-weight: 700;
+  text-align: center;
+}
+
+.speaker-label.me {
+  color: #f5f7f8;
+  background: #3f535f;
 }
 
 .transcript-item p {
@@ -617,12 +639,16 @@ button:disabled {
 .composer {
   min-height: 54px;
   display: grid;
-  grid-template-columns: auto auto minmax(0, 1fr) auto;
+  grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
   gap: 7px;
   padding: 8px 10px;
   border-top: 1px solid rgba(255, 255, 255, 0.09);
   background: rgba(0, 0, 0, 0.12);
+}
+
+.composer.has-preview {
+  grid-template-columns: auto auto minmax(0, 1fr) auto;
 }
 
 .composer-preview {

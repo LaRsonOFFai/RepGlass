@@ -7,6 +7,7 @@ import {
   Code2,
   Copy,
   EyeOff,
+  FileText,
   Gauge,
   Image as ImageIcon,
   KeyRound,
@@ -44,6 +45,7 @@ import type {
   ReasoningEffort,
   ScreenCapturePayload,
   ScreenContextMode,
+  SessionSummaryPayload,
   TranscriptTurn,
   TranscriptionDelay,
 } from '../main/types';
@@ -54,12 +56,14 @@ const API_KEYS_URL = 'https://platform.openai.com/api-keys';
 const API_MODEL_OPTIONS = ['gpt-5.4-mini', 'gpt-5.4', 'gpt-5.5'];
 const FALLBACK_CODEX_MODELS = ['gpt-5.4-mini', 'gpt-5.5'];
 
-type View = 'answers' | 'transcript' | 'settings';
+type View = 'answers' | 'transcript' | 'summary' | 'settings';
 type SettingsTab = 'connection' | 'profile' | 'audio' | 'privacy';
 
 export function App() {
   const capture = useRef(new AudioCapture());
   const toggleListenRef = useRef<() => void>(() => undefined);
+  const smartSubmitRef = useRef<() => void>(() => undefined);
+  const questionInputRef = useRef<HTMLInputElement>(null);
   const [auth, setAuth] = useState<AuthState>({ mode: 'none', hasApiKey: false, hasCodexAuth: false });
   const [settings, setSettings] = useState<AppSettings | null>(null);
   const [codexModels, setCodexModels] = useState<CodexModel[]>([]);
@@ -79,13 +83,18 @@ export function App() {
   const [transcript, setTranscript] = useState<TranscriptTurn[]>([]);
   const [answers, setAnswers] = useState<AnswerPayload[]>([]);
   const [streamingAnswer, setStreamingAnswer] = useState<AnswerPayload | null>(null);
+  const [summary, setSummary] = useState<SessionSummaryPayload | null>(null);
+  const [summaryLoading, setSummaryLoading] = useState(false);
 
   useEffect(() => {
     const audioCapture = capture.current;
-    void Promise.all([window.glass.auth.getState(), window.glass.settings.get()])
-      .then(([nextAuth, nextSettings]) => {
+    void Promise.all([window.glass.auth.getState(), window.glass.settings.get(), window.glass.session.getState()])
+      .then(([nextAuth, nextSettings, sessionState]) => {
         setAuth(nextAuth);
         setSettings(nextSettings);
+        setTranscript(sessionState.transcript);
+        setAnswers(sessionState.answers);
+        setSummary(sessionState.summary);
         const ready = nextSettings.answerProvider === 'codex' ? nextAuth.hasCodexAuth : nextAuth.hasApiKey;
         if (!ready) {
           setView('settings');
@@ -125,13 +134,24 @@ export function App() {
     });
     const offPreview = window.glass.events.onScreenPreview(setScreenPreview);
     const offToggle = window.glass.events.onListenToggleRequested(() => toggleListenRef.current());
+    const offSmartSubmit = window.glass.events.onSmartSubmitRequested(() => smartSubmitRef.current());
+    const offFocusComposer = window.glass.events.onComposerFocusRequested(() => {
+      setView('answers');
+      window.requestAnimationFrame(() => questionInputRef.current?.focus());
+    });
     const offNavigation = window.glass.events.onNavigation((payload) => setView(payload.view));
     const offCleared = window.glass.events.onSessionCleared(() => {
       setTranscript([]);
       setAnswers([]);
       setStreamingAnswer(null);
       setScreenPreview(null);
+      setSummary(null);
     });
+    const offSummary = window.glass.events.onSummary((payload) => {
+      setSummary(payload);
+      if (!payload.partial) setView('summary');
+    });
+    const offSummaryState = window.glass.events.onSummaryState((payload) => setSummaryLoading(payload.loading));
 
     return () => {
       offStatus();
@@ -143,8 +163,12 @@ export function App() {
       offAnswer();
       offPreview();
       offToggle();
+      offSmartSubmit();
+      offFocusComposer();
       offNavigation();
       offCleared();
+      offSummary();
+      offSummaryState();
       audioCapture.stop();
     };
   }, []);
@@ -186,8 +210,8 @@ export function App() {
     try {
       await capture.current.start(
         settings,
-        (payload) => window.glass.listen.sendAudioChunk(payload),
-        () => window.glass.listen.commitAudio(),
+        (source, payload) => window.glass.listen.sendAudioChunk({ ...payload, source }),
+        (source) => window.glass.listen.commitAudio(source),
       );
     } catch (error) {
       await window.glass.listen.stop();
@@ -215,12 +239,46 @@ export function App() {
     setQuestion('');
     setErrorMessage('');
     try {
-      await window.glass.ask.send({ question: trimmed, includeScreen });
+      await window.glass.ask.send(includeScreen ? { question: trimmed, includeScreen: true } : { question: trimmed });
       setIncludeScreen(false);
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : 'Не удалось получить ответ');
     }
   }, [answerAuthReady, includeScreen, loadingAnswer, question, settings]);
+
+  const smartSubmit = useCallback(async () => {
+    if (!settings || loadingAnswer) return;
+    if (!answerAuthReady) {
+      setView('settings');
+      setSettingsTab('connection');
+      setErrorMessage(settings.answerProvider === 'codex' ? 'Подключите OpenAI Codex' : 'Добавьте OpenAI API key');
+      return;
+    }
+
+    const typed = question.trim();
+    if (typed) setQuestion('');
+    setView('answers');
+    setErrorMessage('');
+    try {
+      await window.glass.ask.smart(typed);
+      setIncludeScreen(false);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Не удалось выполнить умный запрос');
+    }
+  }, [answerAuthReady, loadingAnswer, question, settings]);
+
+  smartSubmitRef.current = () => void smartSubmit();
+
+  const generateSummary = useCallback(async () => {
+    if (summaryLoading) return;
+    setView('summary');
+    setErrorMessage('');
+    try {
+      await window.glass.session.summarize();
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Не удалось сформировать итоги');
+    }
+  }, [summaryLoading]);
 
   const toggleScreen = useCallback(async () => {
     if (includeScreen) {
@@ -315,15 +373,20 @@ export function App() {
   return (
     <main className="app-stage">
       <header className="command-capsule">
-        <button className={`listen-control ${listening ? 'active' : ''}`} onClick={listening ? stopListening : startListening}>
+        <button
+          className={`listen-control ${listening ? 'active' : ''}`}
+          title={`${listening ? 'Остановить' : 'Начать'} прослушивание — Ctrl+Shift+L`}
+          onClick={listening ? stopListening : startListening}
+        >
           {listening ? <MicOff size={15} /> : <Mic size={15} />}
           <span>{listening ? 'Стоп' : 'Слушать'}</span>
           {listening && <span className="live-dot" />}
         </button>
 
         <nav className="view-switcher" aria-label="Разделы">
-          <ViewButton active={view === 'answers'} label="Ответы" icon={<MessageSquareText size={15} />} onClick={() => setView('answers')} />
+          <ViewButton active={view === 'answers'} label="Ответы" title="Ответы и текстовый Ask — Ctrl+Shift+Q" icon={<MessageSquareText size={15} />} onClick={() => setView('answers')} />
           <ViewButton active={view === 'transcript'} label="Текст" icon={<ScrollText size={15} />} onClick={() => setView('transcript')} />
+          <ViewButton active={view === 'summary'} label="Итоги" icon={<FileText size={15} />} onClick={() => setView('summary')} />
           <ViewButton active={view === 'settings'} label="Настройки" icon={<SlidersHorizontal size={15} />} onClick={() => setView('settings')} />
         </nav>
 
@@ -388,6 +451,14 @@ export function App() {
             />
           )}
           {view === 'transcript' && <TranscriptView turns={transcript} listening={listening} />}
+          {view === 'summary' && (
+            <SummaryView
+              summary={summary}
+              loading={summaryLoading}
+              hasConversation={Boolean(transcript.length || answers.length)}
+              onGenerate={generateSummary}
+            />
+          )}
           {view === 'settings' && (
             <SettingsView
               tab={settingsTab}
@@ -417,6 +488,7 @@ export function App() {
             loading={loadingAnswer}
             includeScreen={includeScreen}
             preview={screenPreview}
+            inputRef={questionInputRef}
             onQuestionChange={setQuestion}
             onToggleScreen={toggleScreen}
             onSend={sendQuestion}
@@ -427,9 +499,9 @@ export function App() {
   );
 }
 
-function ViewButton(props: { active: boolean; label: string; icon: ReactNode; onClick: () => void }) {
+function ViewButton(props: { active: boolean; label: string; title?: string; icon: ReactNode; onClick: () => void }) {
   return (
-    <button className={props.active ? 'view-button active' : 'view-button'} onClick={props.onClick}>
+    <button className={props.active ? 'view-button active' : 'view-button'} title={props.title} onClick={props.onClick}>
       {props.icon}
       <span>{props.label}</span>
     </button>
@@ -533,6 +605,7 @@ function TranscriptView(props: { turns: TranscriptTurn[]; listening: boolean }) 
     <div className="transcript-feed">
       {ordered.map((turn) => (
         <div className={turn.partial ? 'transcript-item partial' : 'transcript-item'} key={turn.id}>
+          <span className={`speaker-label ${turn.speaker}`}>{turn.speaker === 'me' ? 'Вы' : 'Собеседник'}</span>
           <span className="transcript-time">
             {new Date(turn.createdAt).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}
           </span>
@@ -544,17 +617,58 @@ function TranscriptView(props: { turns: TranscriptTurn[]; listening: boolean }) 
   );
 }
 
+function SummaryView(props: {
+  summary: SessionSummaryPayload | null;
+  loading: boolean;
+  hasConversation: boolean;
+  onGenerate: () => void;
+}) {
+  if (!props.summary) {
+    return (
+      <div className="empty-state summary-empty">
+        <div className={props.loading ? 'listening-orbit active' : 'listening-orbit'}>
+          <FileText size={27} />
+        </div>
+        <h1>{props.loading ? 'Формирую итоги' : 'Итоги текущей сессии'}</h1>
+        <p>{props.loading ? 'Анализирую разговор и ответы' : 'Итоги появятся после остановки прослушивания'}</p>
+        <button className="primary-button" onClick={props.onGenerate} disabled={!props.hasConversation || props.loading}>
+          {props.loading ? <RefreshCw className="spin" size={15} /> : <FileText size={15} />}
+          <span>Сформировать итоги</span>
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="summary-view">
+      <article className={props.summary.partial ? 'answer-card streaming' : 'answer-card'}>
+        <div className="answer-meta">
+          <span>{props.summary.transcriptCount} реплик</span>
+          <span>{props.summary.answerCount} ответов</span>
+          <button className="icon-button" title="Обновить итоги" onClick={props.onGenerate} disabled={props.loading}>
+            <RefreshCw className={props.loading ? 'spin' : undefined} size={14} />
+          </button>
+        </div>
+        <div className="markdown-answer">
+          <ReactMarkdown remarkPlugins={[remarkGfm]}>{props.summary.text}</ReactMarkdown>
+        </div>
+      </article>
+    </div>
+  );
+}
+
 function Composer(props: {
   question: string;
   loading: boolean;
   includeScreen: boolean;
   preview: ScreenCapturePayload | null;
+  inputRef: React.RefObject<HTMLInputElement | null>;
   onQuestionChange: (value: string) => void;
   onToggleScreen: () => void;
   onSend: () => void;
 }) {
   return (
-    <div className="composer">
+    <div className={props.includeScreen && props.preview ? 'composer has-preview' : 'composer'}>
       {props.includeScreen && props.preview && <img className="composer-preview" src={props.preview.dataUrl} alt="Экран" />}
       <button
         className={props.includeScreen ? 'composer-tool active' : 'composer-tool'}
@@ -564,8 +678,10 @@ function Composer(props: {
         <Monitor size={17} />
       </button>
       <input
+        ref={props.inputRef}
         value={props.question}
         placeholder="Задать вопрос..."
+        title="Текстовый вопрос — Ctrl+Shift+Q, умный запрос — Ctrl+Enter"
         onChange={(event) => props.onQuestionChange(event.target.value)}
         onKeyDown={(event) => {
           if (event.key === 'Enter') {
@@ -948,6 +1064,7 @@ function ToggleRow(props: {
 
 function viewTitle(view: View): string {
   if (view === 'transcript') return 'Транскрипция';
+  if (view === 'summary') return 'Итоги сессии';
   if (view === 'settings') return 'Настройки';
   return 'Живые ответы';
 }

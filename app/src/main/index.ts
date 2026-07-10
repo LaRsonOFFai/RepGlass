@@ -21,7 +21,7 @@ import { CodexService } from './codexService';
 import { OpenAIService } from './openaiService';
 import { ScreenCaptureService } from './screenCaptureService';
 import { SecureStore } from './secureStore';
-import type { AppSettings, AskRequest, AudioChunkPayload } from './types';
+import type { AppSettings, AskRequest, AudioInputSource, LabeledAudioChunkPayload } from './types';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const APP_NAME = 'RepGlass';
@@ -65,6 +65,7 @@ let runtime: AssistantRuntime;
 let isQuitting = false;
 let interactiveMode = true;
 let visibleTestMode = !app.isPackaged && process.env.REPGLASS_VISIBLE_TEST === 'true';
+let captureQueue: Promise<void> = Promise.resolve();
 
 const openai = new OpenAIService();
 const codex = new CodexService();
@@ -194,7 +195,7 @@ function setInteractionMode(enabled: boolean): void {
   updateTrayMenu();
 }
 
-function revealWindow(options: { interactive?: boolean; view?: 'answers' | 'transcript' | 'settings' } = {}): void {
+function revealWindow(options: { interactive?: boolean; view?: 'answers' | 'transcript' | 'summary' | 'settings' } = {}): void {
   if (!mainWindow || mainWindow.isDestroyed()) createWindow();
   const win = mainWindow;
   if (!win || win.isDestroyed()) return;
@@ -220,6 +221,16 @@ function hideOverlay(): void {
 function toggleOverlay(): void {
   if (isWindowVisible()) hideOverlay();
   else revealWindow({ interactive: true });
+}
+
+function activateOrHideOverlay(): void {
+  if (!isWindowVisible() || !interactiveMode) revealWindow({ interactive: true });
+  else hideOverlay();
+}
+
+function focusQuestionInput(): void {
+  revealWindow({ interactive: true, view: 'answers' });
+  setTimeout(() => mainWindow?.webContents.send('composer:focus-requested', {}), 50);
 }
 
 function createWindow(): void {
@@ -300,10 +311,7 @@ function createTray(): void {
   if (tray || shouldSuppressTray()) return;
   tray = new Tray(createTrayIcon());
   tray.setToolTip(APP_NAME);
-  tray.on('click', () => {
-    if (isWindowVisible()) setInteractionMode(!interactiveMode);
-    else revealWindow({ interactive: true });
-  });
+  tray.on('click', activateOrHideOverlay);
   tray.on('double-click', () => revealWindow({ interactive: true }));
   updateTrayMenu();
 }
@@ -338,6 +346,7 @@ function updateTrayMenu(): void {
     },
     { label: listening ? 'Остановить прослушивание' : 'Начать прослушивание', click: requestListenToggle },
     { label: 'Транскрипция', click: () => revealWindow({ interactive: true, view: 'transcript' }) },
+    { label: 'Итоги сессии', click: () => revealWindow({ interactive: true, view: 'summary' }) },
     { label: 'Настройки и авторизация', click: () => revealWindow({ interactive: true, view: 'settings' }) },
     { type: 'separator' },
     {
@@ -357,9 +366,10 @@ function updateTrayMenu(): void {
   }
   template.push(
     { type: 'separator' },
-    { label: 'Ctrl+Shift+G: окно', enabled: false },
+    { label: 'Ctrl+Shift+G: активировать / скрыть окно', enabled: false },
+    { label: 'Ctrl+Shift+Q: текстовый вопрос', enabled: false },
     { label: 'Ctrl+Shift+L: прослушивание', enabled: false },
-    { label: 'Ctrl+Enter: ответить на последнюю фразу', enabled: false },
+    { label: 'Ctrl+Enter: текст / аудио / экран', enabled: false },
     { type: 'separator' },
     { label: 'Выход', click: () => app.quit() },
   );
@@ -393,13 +403,13 @@ function registerShortcut(accelerator: string, callback: () => void): boolean {
 
 function registerShortcuts(): void {
   registerShortcut('CommandOrControl+Shift+G', () => {
-    if (!isWindowVisible()) revealWindow({ interactive: true });
-    else setInteractionMode(!interactiveMode);
+    activateOrHideOverlay();
   });
+  registerShortcut('CommandOrControl+Shift+Q', focusQuestionInput);
   registerShortcut('CommandOrControl+Shift+L', requestListenToggle);
   registerShortcut('CommandOrControl+Enter', () => {
-    revealWindow({ interactive: false, view: 'answers' });
-    void runtime.askLatest(true).catch(() => undefined);
+    revealWindow({ interactive: true, view: 'answers' });
+    mainWindow?.webContents.send('ask:smart-submit-requested', {});
   });
   registerShortcut('CommandOrControl+\\', toggleOverlay);
   registerShortcut('CommandOrControl+Shift+Space', toggleOverlay);
@@ -409,17 +419,38 @@ function registerShortcuts(): void {
   registerShortcut('CommandOrControl+Right', () => moveOverlay(32, 0));
 }
 
-async function captureWithPrivacy() {
+async function captureWithPrivacyNow() {
+  const win = mainWindow && !mainWindow.isDestroyed() ? mainWindow : null;
+  const wasVisible = Boolean(win?.isVisible());
+  const wasFocused = Boolean(win?.isFocused());
+  const wasInteractive = interactiveMode;
   const hadTray = Boolean(tray);
-  if (hadTray) {
-    destroyTray();
-    await new Promise((resolve) => setTimeout(resolve, 120));
-  }
+  if (wasVisible) win?.hide();
+  if (hadTray) destroyTray();
+  if (wasVisible || hadTray) await new Promise((resolve) => setTimeout(resolve, 180));
+
   try {
     return await screenCapture.captureCurrentDisplay();
   } finally {
-    if (hadTray && !shouldSuppressTray()) setTimeout(createTray, 80);
+    if (wasVisible && win && !win.isDestroyed() && mainWindow === win) {
+      applyCaptureProtection(win);
+      win.setAlwaysOnTop(true, 'screen-saver');
+      if (wasFocused && wasInteractive) win.show();
+      else win.showInactive();
+      win.moveTop();
+      setInteractionMode(wasInteractive);
+    }
+    if (hadTray && !shouldSuppressTray()) createTray();
   }
+}
+
+function captureWithPrivacy() {
+  const capture = captureQueue.then(captureWithPrivacyNow, captureWithPrivacyNow);
+  captureQueue = capture.then(
+    () => undefined,
+    () => undefined,
+  );
+  return capture;
 }
 
 async function getAuthState() {
@@ -469,13 +500,19 @@ function registerIpc(): void {
   ipcMain.handle('listen:stop', () => {
     runtime.stop();
     syncTrayVisibility();
+    setTimeout(() => {
+      if (!runtime.isListening() && runtime.hasConversation()) void runtime.summarizeSession().catch(() => undefined);
+    }, 4_200);
     return { success: true };
   });
-  ipcMain.on('listen:audioChunk', (_event, payload: AudioChunkPayload) => runtime.handleAudioChunk(payload));
-  ipcMain.on('listen:commit', () => runtime.commitAudio());
+  ipcMain.on('listen:audioChunk', (_event, payload: LabeledAudioChunkPayload) => runtime.handleAudioChunk(payload));
+  ipcMain.on('listen:commit', (_event, source: AudioInputSource) => runtime.commitAudio(source));
 
   ipcMain.handle('ask:send', (_event, request: AskRequest | string) => runtime.ask(request));
   ipcMain.handle('ask:latest', (_event, includeScreen: boolean) => runtime.askLatest(includeScreen));
+  ipcMain.handle('ask:smart', (_event, typedQuestion?: string) => runtime.askSmart(typedQuestion));
+  ipcMain.handle('session:getState', () => runtime.getSessionState());
+  ipcMain.handle('session:summarize', () => runtime.summarizeSession());
   ipcMain.handle('session:clear', () => runtime.clearSession());
   ipcMain.handle('screen:capturePreview', async () => {
     const capture = await captureWithPrivacy();

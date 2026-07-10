@@ -35,7 +35,7 @@ export class OpenAIService {
     onDelta?: (text: string) => void;
   }): Promise<string> {
     const client = new OpenAI({ apiKey: params.apiKey });
-    const context = params.conversation.slice(-20).join('\n');
+    const context = params.conversation.join('\n');
     const userText = [
       'Недавняя транскрипция:',
       context || 'Транскрипции пока нет.',
