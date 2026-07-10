@@ -31,7 +31,8 @@ export class AudioCapture {
       this.onCommit = onCommit;
       const context = new AudioContext({ latencyHint: 'interactive' });
       this.context = context;
-      await context.audioWorklet.addModule(new URL('./pcmCapture.worklet.js', import.meta.url));
+      const workletUrl = new URL('./pcmCapture.worklet.js', window.location.href);
+      await context.audioWorklet.addModule(workletUrl.href);
 
       const workletNode = new AudioWorkletNode(context, 'repglass-pcm-capture');
       this.workletNode = workletNode;

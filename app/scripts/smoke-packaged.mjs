@@ -114,11 +114,23 @@ async function run() {
 
     const result = await evaluate(`(async () => {
       const codex = await window.glass.auth.getCodexStatus();
+      const audioContext = new AudioContext({ latencyHint: 'interactive' });
+      let workletLoaded = false;
+      try {
+        const workletUrl = new URL('./pcmCapture.worklet.js', window.location.href);
+        await audioContext.audioWorklet.addModule(workletUrl.href);
+        const workletNode = new AudioWorkletNode(audioContext, 'repglass-pcm-capture');
+        workletNode.disconnect();
+        workletLoaded = true;
+      } finally {
+        await audioContext.close();
+      }
       return {
         href: location.href,
         title: document.title,
         workspaceVisible: Boolean(document.querySelector('.workspace-panel')),
         hasPreloadApi: Boolean(window.glass),
+        workletLoaded,
         codexAvailable: codex.available,
         codexLoggedIn: codex.loggedIn,
         codexVersion: codex.version,
@@ -127,7 +139,7 @@ async function run() {
     })()`);
 
     if (result.href !== 'repglass://app/index.html') throw new Error(`Unexpected renderer URL: ${result.href}`);
-    if (result.title !== 'RepGlass' || !result.workspaceVisible || !result.hasPreloadApi) {
+    if (result.title !== 'RepGlass' || !result.workspaceVisible || !result.hasPreloadApi || !result.workletLoaded) {
       throw new Error(`Packaged renderer is incomplete: ${JSON.stringify(result)}`);
     }
     if (!result.codexAvailable || !/^\d+\.\d+\.\d+/.test(result.codexVersion || '')) {
