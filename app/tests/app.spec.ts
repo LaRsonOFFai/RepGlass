@@ -44,10 +44,12 @@ test('renders one usable translucent workspace', async ({ browserName: _browserN
 });
 
 test('opens transcript and every personalization section', async ({ browserName: _browserName }, testInfo) => {
+  const backButton = page.getByRole('button', { name: 'Вернуться' });
+  if (await backButton.isVisible()) await backButton.click();
   await page.getByRole('button', { name: 'Текст' }).click();
   await expect(page.getByText('Транскрипция пуста')).toBeVisible();
 
-  await page.getByRole('button', { name: 'Настройки', exact: true }).first().click();
+  await page.getByTitle('Настройки и авторизация').click();
   for (const section of ['Подключение', 'Профиль']) {
     await page.getByRole('button', { name: section }).click();
   }
@@ -57,6 +59,7 @@ test('opens transcript and every personalization section', async ({ browserName:
   await page.getByRole('button', { name: 'Приватность' }).click();
   await expect(page.getByText('Ключ API шифруется через Windows DPAPI.')).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath('repglass-settings.png') });
+  await page.getByRole('button', { name: 'Вернуться' }).click();
   await page.getByRole('button', { name: 'Итоги' }).click();
   await expect(page.getByText('Итоги текущей сессии')).toBeVisible();
   await page.waitForTimeout(120);
@@ -64,7 +67,7 @@ test('opens transcript and every personalization section', async ({ browserName:
 });
 
 test('captures a protected screen preview in the same window', async ({ browserName: _browserName }, testInfo) => {
-  await page.getByRole('button', { name: 'Ответы' }).click();
+  if (!(await page.locator('.ask-panel').isVisible())) await page.getByRole('button', { name: 'Ask' }).click();
   const visibilitySamples = electronApp.evaluate(async ({ BrowserWindow }) => {
     const samples: boolean[] = [];
     for (let index = 0; index < 50; index += 1) {
@@ -91,15 +94,53 @@ test('captures a protected screen preview in the same window', async ({ browserN
   await page.screenshot({ path: testInfo.outputPath('repglass-screen-context.png') });
 });
 
+test('keeps the screenshot attached to the answer that used it', async ({ browserName: _browserName }, testInfo) => {
+  const request = {
+    id: 'screen-request-e2e',
+    question: 'Исправь ошибку в коде на экране',
+    trigger: 'hotkey',
+    sources: ['audio', 'screen'],
+    createdAt: Date.now(),
+    speaker: 'them',
+    transcriptTurnIds: ['system:e2e'],
+    screen: {
+      dataUrl: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+      displayName: 'Основной экран',
+    },
+  };
+  const answer = {
+    id: request.id,
+    request,
+    question: request.question,
+    answer: 'Проверить условие и обработать пустое значение перед обращением к свойству.',
+    createdAt: Date.now(),
+    category: 'screen',
+    usedScreen: true,
+  };
+
+  await electronApp.evaluate(({ BrowserWindow }, payload) => {
+    BrowserWindow.getAllWindows()[0]?.webContents.send('ask:request', payload.request);
+    BrowserWindow.getAllWindows()[0]?.webContents.send('ask:answer', payload.answer);
+  }, { request, answer });
+
+  await expect(page.getByText('Исправь ошибку в коде на экране')).toBeVisible();
+  await expect(page.getByText('Аудио')).toBeVisible();
+  await expect(page.getByText('Экран', { exact: true })).toBeVisible();
+  await expect(page.locator('.request-screen img')).toBeVisible();
+  await expect(page.getByText(/Анализ экрана · Основной экран/)).toBeVisible();
+  await expect(page.getByText(/Проверить условие/)).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath('repglass-anchored-screen-answer.png') });
+});
+
 test('streams a live Codex answer with screen context', async () => {
   test.skip(process.env.REPGLASS_LIVE_CODEX !== '1', 'Live Codex smoke test is opt-in');
   test.setTimeout(120_000);
-  await page.getByRole('button', { name: 'Ответы' }).click();
+  if (!(await page.locator('.ask-panel').isVisible())) await page.getByRole('button', { name: 'Ask' }).click();
   await page.getByTitle('Добавить экран к запросу').click();
   const input = page.getByPlaceholder('Задать вопрос...');
   await input.fill('Ответь одним словом: сколько будет два плюс два?');
   await page.getByTitle('Отправить').click();
-  const card = page.locator('.answer-card').first();
+  const card = page.locator('.answer-detail').first();
   await expect(card).toBeVisible({ timeout: 90_000 });
   await expect(card.locator('.markdown-answer')).not.toBeEmpty();
   await expect(card).not.toHaveClass(/streaming/, { timeout: 90_000 });

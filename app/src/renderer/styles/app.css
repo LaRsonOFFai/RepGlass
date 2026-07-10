@@ -1233,3 +1233,456 @@ input:disabled {
     height: 48px;
   }
 }
+
+/* Original Glass interaction model, implemented inside one BrowserWindow. */
+.original-shell {
+  grid-template-rows: 48px minmax(0, 1fr);
+  gap: 7px;
+  padding: 7px 10px 10px;
+}
+
+.original-shell .command-capsule,
+.original-shell .workspace-panel,
+.glass-workspace {
+  width: min(100%, 960px);
+}
+
+.original-shell .command-capsule {
+  border-radius: 8px;
+  background: rgba(12, 15, 17, 0.82);
+}
+
+.header-action {
+  -webkit-app-region: no-drag;
+  height: 31px;
+  min-width: 78px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 0 10px;
+  border-radius: 6px;
+  background: transparent;
+  color: rgba(244, 246, 247, 0.68);
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 680;
+}
+
+.header-action:hover,
+.header-action.active {
+  color: #f6f8f9;
+  background: rgba(255, 255, 255, 0.09);
+}
+
+.header-action kbd {
+  min-width: 35px;
+  padding: 2px 4px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.2);
+  color: rgba(244, 246, 247, 0.42);
+  font-family: inherit;
+  font-size: 8px;
+  font-weight: 650;
+  text-align: center;
+}
+
+.session-label {
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: rgba(244, 246, 247, 0.48);
+  font-size: 9px;
+}
+
+.session-label.live {
+  color: #d7ff5f;
+}
+
+.glass-workspace {
+  min-width: 0;
+  min-height: 0;
+  position: relative;
+  justify-self: center;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 8px;
+  overflow: hidden;
+  animation: panel-in 220ms ease-out both;
+}
+
+.glass-workspace.ask-visible {
+  grid-template-columns: minmax(320px, 0.72fr) minmax(420px, 1.28fr);
+}
+
+.feature-panel {
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  grid-template-rows: 46px minmax(0, 1fr) auto;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.13);
+  border-radius: 8px;
+  background: rgba(13, 16, 18, 0.8);
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.32);
+  backdrop-filter: blur(26px) saturate(1.22);
+}
+
+.ask-panel {
+  grid-template-rows: 46px minmax(0, 1fr) auto;
+}
+
+.feature-bar {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 8px 6px 11px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.085);
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.feature-title {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.feature-title > div {
+  min-width: 0;
+  display: grid;
+  gap: 1px;
+}
+
+.feature-title strong,
+.feature-title small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.feature-title strong {
+  font-size: 12px;
+  font-weight: 720;
+}
+
+.feature-title small {
+  color: rgba(244, 246, 247, 0.42);
+  font-size: 9px;
+}
+
+.audio-status,
+.ask-status {
+  width: 27px;
+  height: 27px;
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  border-radius: 6px;
+  color: rgba(244, 246, 247, 0.65);
+  background: rgba(255, 255, 255, 0.07);
+}
+
+.audio-status.active {
+  color: #d7ff5f;
+  background: rgba(215, 255, 95, 0.1);
+}
+
+.ask-status {
+  color: #6de1ff;
+  background: rgba(109, 225, 255, 0.09);
+}
+
+.panel-mode-switcher,
+.ask-controls {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.panel-mode-switcher {
+  padding: 2px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.045);
+}
+
+.panel-mode-switcher .view-button {
+  height: 25px;
+  padding: 0 7px;
+  border-radius: 5px;
+  font-size: 9px;
+}
+
+.history-position {
+  min-width: 31px;
+  color: rgba(244, 246, 247, 0.4);
+  font-size: 9px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.feature-content {
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.listen-content > *,
+.ask-content > * {
+  min-width: 0;
+}
+
+.listen-footer {
+  min-height: 41px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 5px 8px 5px 11px;
+  border-top: 1px solid rgba(255, 255, 255, 0.075);
+  color: rgba(244, 246, 247, 0.38);
+  font-size: 9px;
+}
+
+.finish-button {
+  min-width: 88px;
+  height: 29px;
+}
+
+.ask-content {
+  overflow: auto;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.18) transparent;
+}
+
+.request-context {
+  padding: 10px 12px 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.request-heading {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.source-chips {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.source-chip {
+  padding: 3px 6px;
+  border-radius: 4px;
+  color: rgba(244, 246, 247, 0.74);
+  background: rgba(255, 255, 255, 0.075);
+  font-size: 8px;
+  font-weight: 760;
+  text-transform: uppercase;
+}
+
+.source-audio {
+  color: #e8ff9d;
+  background: rgba(215, 255, 95, 0.1);
+}
+
+.source-screen {
+  color: #bcefff;
+  background: rgba(109, 225, 255, 0.1);
+}
+
+.source-text {
+  color: #ffd3aa;
+  background: rgba(255, 179, 107, 0.1);
+}
+
+.request-time {
+  color: rgba(244, 246, 247, 0.32);
+  font-size: 9px;
+}
+
+.request-context > p {
+  margin: 8px 0 0;
+  user-select: text;
+  color: rgba(248, 250, 251, 0.8);
+  font-size: 12px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.request-screen {
+  margin: 10px 0 0;
+  overflow: hidden;
+  border: 1px solid rgba(109, 225, 255, 0.2);
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.24);
+}
+
+.request-screen img {
+  width: 100%;
+  max-height: 210px;
+  display: block;
+  object-fit: contain;
+  background: #080a0b;
+}
+
+.request-screen figcaption {
+  min-height: 28px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px;
+  color: rgba(188, 239, 255, 0.65);
+  font-size: 9px;
+}
+
+.answer-detail {
+  min-width: 0;
+}
+
+.answer-detail.streaming {
+  box-shadow: inset 2px 0 0 rgba(215, 255, 95, 0.6);
+}
+
+.answer-detail-meta {
+  min-height: 38px;
+  padding: 6px 9px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.answer-detail .markdown-answer {
+  padding: 13px 14px 18px;
+}
+
+.screen-used {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: #7ddff7;
+  font-size: 8px;
+  white-space: nowrap;
+}
+
+.transcript-feed {
+  height: 100%;
+  overflow: auto;
+}
+
+.transcript-item {
+  grid-template-columns: 74px 42px minmax(0, 1fr) auto;
+  padding: 9px 0;
+}
+
+.insights-view {
+  height: 100%;
+  overflow: auto;
+  scrollbar-width: thin;
+}
+
+.insights-meta {
+  min-height: 35px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 4px 8px 4px 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+  color: rgba(244, 246, 247, 0.42);
+  font-size: 9px;
+}
+
+.interactive-insights {
+  padding: 10px 12px 16px;
+}
+
+.interactive-insights li {
+  padding: 0;
+}
+
+.insight-action {
+  width: 100%;
+  padding: 5px 6px;
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+  line-height: 1.45;
+}
+
+.insight-action:hover {
+  background: rgba(255, 255, 255, 0.07);
+}
+
+.summary-view {
+  padding: 0;
+}
+
+.summary-view .answer-card {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.settings-workspace {
+  width: min(100%, 960px);
+  grid-template-rows: 48px minmax(0, 1fr);
+}
+
+@media (max-width: 780px) {
+  .glass-workspace.ask-visible {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(190px, 0.72fr) minmax(250px, 1.28fr);
+    overflow: auto;
+  }
+
+  .feature-panel {
+    min-height: 190px;
+  }
+
+  .header-action kbd,
+  .session-label,
+  .original-shell .model-label {
+    display: none;
+  }
+}
+
+@media (max-width: 560px) {
+  .original-shell {
+    padding-inline: 6px;
+  }
+
+  .header-action {
+    min-width: 32px;
+    padding: 0 8px;
+  }
+
+  .header-action span,
+  .panel-mode-switcher .view-button span,
+  .listen-footer > span,
+  .privacy-indicator {
+    display: none;
+  }
+
+  .listen-control {
+    min-width: 88px;
+  }
+
+  .transcript-item {
+    grid-template-columns: 68px minmax(0, 1fr) auto;
+  }
+
+  .transcript-time {
+    display: none;
+  }
+}

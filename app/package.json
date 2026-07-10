@@ -1,6 +1,6 @@
 {
   "name": "repglass",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "author": "LaRsonOFFai",
   "description": "Private translucent live assistant with Codex OAuth and realtime transcription.",
   "main": "out/main/index.js",

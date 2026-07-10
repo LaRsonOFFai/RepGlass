@@ -239,10 +239,10 @@ function createWindow(): void {
   let didAutoReveal = false;
 
   mainWindow = new BrowserWindow({
-    width: 820,
-    height: 590,
+    width: 980,
+    height: 620,
     minWidth: 460,
-    minHeight: 390,
+    minHeight: 360,
     frame: false,
     transparent: true,
     backgroundColor: '#00000000',
@@ -344,9 +344,16 @@ function updateTrayMenu(): void {
         else setInteractionMode(!interactiveMode);
       },
     },
-    { label: listening ? 'Остановить прослушивание' : 'Начать прослушивание', click: requestListenToggle },
+    { label: listening ? 'Поставить на паузу' : 'Начать прослушивание', click: requestListenToggle },
     { label: 'Транскрипция', click: () => revealWindow({ interactive: true, view: 'transcript' }) },
-    { label: 'Итоги сессии', click: () => revealWindow({ interactive: true, view: 'summary' }) },
+    {
+      label: 'Завершить сессию и создать итоги',
+      enabled: runtime?.hasConversation() ?? false,
+      click: () => {
+        revealWindow({ interactive: true });
+        mainWindow?.webContents.send('session:finish-requested', {});
+      },
+    },
     { label: 'Настройки и авторизация', click: () => revealWindow({ interactive: true, view: 'settings' }) },
     { type: 'separator' },
     {
@@ -498,11 +505,8 @@ function registerIpc(): void {
     }
   });
   ipcMain.handle('listen:stop', () => {
-    runtime.stop();
+    runtime.pause();
     syncTrayVisibility();
-    setTimeout(() => {
-      if (!runtime.isListening() && runtime.hasConversation()) void runtime.summarizeSession().catch(() => undefined);
-    }, 4_200);
     return { success: true };
   });
   ipcMain.on('listen:audioChunk', (_event, payload: LabeledAudioChunkPayload) => runtime.handleAudioChunk(payload));
@@ -512,6 +516,12 @@ function registerIpc(): void {
   ipcMain.handle('ask:latest', (_event, includeScreen: boolean) => runtime.askLatest(includeScreen));
   ipcMain.handle('ask:smart', (_event, typedQuestion?: string) => runtime.askSmart(typedQuestion));
   ipcMain.handle('session:getState', () => runtime.getSessionState());
+  ipcMain.handle('session:finish', async () => {
+    const summary = await runtime.finishSession();
+    syncTrayVisibility();
+    return summary;
+  });
+  ipcMain.handle('session:refreshInsights', () => runtime.refreshInsights());
   ipcMain.handle('session:summarize', () => runtime.summarizeSession());
   ipcMain.handle('session:clear', () => runtime.clearSession());
   ipcMain.handle('screen:capturePreview', async () => {

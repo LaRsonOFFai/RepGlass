@@ -6,6 +6,9 @@ export type ReasoningEffort = 'low' | 'medium' | 'high';
 export type ScreenContextMode = 'off' | 'smart' | 'always';
 export type TranscriptionDelay = 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
 export type AnswerCategory = 'code' | 'testing' | 'system-design' | 'screen' | 'general';
+export type SessionPhase = 'idle' | 'listening' | 'paused' | 'finishing' | 'finished';
+export type RequestTrigger = 'manual' | 'auto' | 'hotkey' | 'insight';
+export type RequestSource = 'text' | 'audio' | 'screen';
 
 export type AppSettings = {
   answerProvider: AnswerProvider;
@@ -59,8 +62,20 @@ export type TranscriptTurn = {
   partial?: boolean;
 };
 
+export type AssistantRequestPayload = {
+  id: string;
+  question: string;
+  trigger: RequestTrigger;
+  sources: RequestSource[];
+  createdAt: number;
+  speaker?: TranscriptTurn['speaker'];
+  transcriptTurnIds?: string[];
+  screen?: ScreenCapturePayload;
+};
+
 export type AnswerPayload = {
   id: string;
+  request: AssistantRequestPayload;
   question: string;
   answer: string;
   createdAt: number;
@@ -75,6 +90,7 @@ export type AnswerDeltaPayload = Omit<AnswerPayload, 'answer' | 'createdAt'> & {
 export type AskRequest = {
   question: string;
   includeScreen?: boolean;
+  trigger?: RequestTrigger;
 };
 
 export type ScreenCapturePayload = {
@@ -90,8 +106,17 @@ export type SessionSummaryPayload = {
   answerCount: number;
 };
 
+export type SessionInsightsPayload = {
+  text: string;
+  createdAt: number;
+  partial?: boolean;
+  transcriptCount: number;
+};
+
 export type SessionStatePayload = {
+  phase: SessionPhase;
   transcript: TranscriptTurn[];
   answers: AnswerPayload[];
+  insights: SessionInsightsPayload | null;
   summary: SessionSummaryPayload | null;
 };

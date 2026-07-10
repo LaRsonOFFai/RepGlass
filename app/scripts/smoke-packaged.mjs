@@ -138,6 +138,10 @@ async function run() {
         workletLoaded,
         workletNodes,
         hasSmartAsk: typeof window.glass.ask.smart === 'function',
+        hasOriginalCommandBar: Boolean(document.querySelector('.command-capsule .header-action')),
+        hasAskCommand: [...document.querySelectorAll('.header-action')].some((element) => element.textContent?.includes('Ask')),
+        hasSessionFinish: typeof window.glass.session.finish === 'function',
+        hasLiveInsights: typeof window.glass.session.refreshInsights === 'function',
         hasSessionSummary: typeof window.glass.session.summarize === 'function',
         codexAvailable: codex.available,
         codexLoggedIn: codex.loggedIn,
@@ -154,6 +158,10 @@ async function run() {
       !result.workletLoaded ||
       result.workletNodes !== 2 ||
       !result.hasSmartAsk ||
+      !result.hasOriginalCommandBar ||
+      !result.hasAskCommand ||
+      !result.hasSessionFinish ||
+      !result.hasLiveInsights ||
       !result.hasSessionSummary
     ) {
       throw new Error(`Packaged renderer is incomplete: ${JSON.stringify(result)}`);

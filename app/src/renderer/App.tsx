@@ -3,6 +3,8 @@ import {
   Bot,
   Bug,
   Check,
+  ChevronLeft,
+  ChevronRight,
   Clipboard,
   Code2,
   Copy,
@@ -11,27 +13,28 @@ import {
   Gauge,
   Image as ImageIcon,
   KeyRound,
+  Lightbulb,
   LogIn,
   LogOut,
   MessageSquareText,
   Mic,
-  MicOff,
   Minus,
   Monitor,
+  Pause,
+  Play,
   Radio,
   RefreshCw,
   ScrollText,
   Send,
   Settings2,
   ShieldCheck,
-  SlidersHorizontal,
   Sparkles,
   Trash2,
   UserRoundCog,
   Volume2,
   X,
 } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { isValidElement, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import type { CodexModel } from '../main/codexService';
@@ -39,12 +42,15 @@ import { PROFILE_LABELS } from '../main/defaults';
 import type {
   AnswerDetail,
   AnswerPayload,
+  AssistantRequestPayload,
   AppSettings,
   AuthState,
   InterviewProfile,
   ReasoningEffort,
   ScreenCapturePayload,
   ScreenContextMode,
+  SessionInsightsPayload,
+  SessionPhase,
   SessionSummaryPayload,
   TranscriptTurn,
   TranscriptionDelay,
@@ -56,22 +62,27 @@ const API_KEYS_URL = 'https://platform.openai.com/api-keys';
 const API_MODEL_OPTIONS = ['gpt-5.4-mini', 'gpt-5.4', 'gpt-5.5'];
 const FALLBACK_CODEX_MODELS = ['gpt-5.4-mini', 'gpt-5.5'];
 
-type View = 'answers' | 'transcript' | 'summary' | 'settings';
+type View = 'workspace' | 'settings';
+type ListenMode = 'transcript' | 'insights' | 'summary';
 type SettingsTab = 'connection' | 'profile' | 'audio' | 'privacy';
 
 export function App() {
   const capture = useRef(new AudioCapture());
   const toggleListenRef = useRef<() => void>(() => undefined);
   const smartSubmitRef = useRef<() => void>(() => undefined);
+  const finishSessionRef = useRef<() => void>(() => undefined);
   const questionInputRef = useRef<HTMLInputElement>(null);
   const [auth, setAuth] = useState<AuthState>({ mode: 'none', hasApiKey: false, hasCodexAuth: false });
   const [settings, setSettings] = useState<AppSettings | null>(null);
   const [codexModels, setCodexModels] = useState<CodexModel[]>([]);
-  const [view, setView] = useState<View>('answers');
+  const [view, setView] = useState<View>('workspace');
+  const [listenMode, setListenMode] = useState<ListenMode>('transcript');
+  const [askOpen, setAskOpen] = useState(true);
   const [settingsTab, setSettingsTab] = useState<SettingsTab>('connection');
   const [status, setStatus] = useState('Готово');
   const [errorMessage, setErrorMessage] = useState('');
   const [listening, setListening] = useState(false);
+  const [phase, setPhase] = useState<SessionPhase>('idle');
   const [loadingAnswer, setLoadingAnswer] = useState(false);
   const [apiKey, setApiKey] = useState('');
   const [apiBusy, setApiBusy] = useState(false);
@@ -79,10 +90,12 @@ export function App() {
   const [question, setQuestion] = useState('');
   const [includeScreen, setIncludeScreen] = useState(false);
   const [screenPreview, setScreenPreview] = useState<ScreenCapturePayload | null>(null);
-  const [copyState, setCopyState] = useState<'idle' | 'copied'>('idle');
   const [transcript, setTranscript] = useState<TranscriptTurn[]>([]);
   const [answers, setAnswers] = useState<AnswerPayload[]>([]);
   const [streamingAnswer, setStreamingAnswer] = useState<AnswerPayload | null>(null);
+  const [activeRequest, setActiveRequest] = useState<AssistantRequestPayload | null>(null);
+  const [insights, setInsights] = useState<SessionInsightsPayload | null>(null);
+  const [insightsLoading, setInsightsLoading] = useState(false);
   const [summary, setSummary] = useState<SessionSummaryPayload | null>(null);
   const [summaryLoading, setSummaryLoading] = useState(false);
 
@@ -94,6 +107,8 @@ export function App() {
         setSettings(nextSettings);
         setTranscript(sessionState.transcript);
         setAnswers(sessionState.answers);
+        setPhase(sessionState.phase);
+        setInsights(sessionState.insights);
         setSummary(sessionState.summary);
         const ready = nextSettings.answerProvider === 'codex' ? nextAuth.hasCodexAuth : nextAuth.hasApiKey;
         if (!ready) {
@@ -113,6 +128,7 @@ export function App() {
       setErrorMessage(message);
     });
     const offListen = window.glass.events.onListenState((payload) => setListening(payload.listening));
+    const offPhase = window.glass.events.onSessionPhase((payload) => setPhase(payload.phase));
     const offTranscript = window.glass.events.onTranscript((turn) => {
       setTranscript((current) => {
         const existingIndex = current.findIndex((item) => item.id === turn.id);
@@ -122,53 +138,85 @@ export function App() {
         return next;
       });
     });
+    const offTranscriptRemoved = window.glass.events.onTranscriptRemoved((payload) => {
+      setTranscript((current) => current.filter((turn) => turn.id !== payload.id));
+    });
     const offAskState = window.glass.events.onAskState((payload) => setLoadingAnswer(payload.loading));
+    const offRequest = window.glass.events.onRequest((request) => {
+      setView('workspace');
+      setAskOpen(true);
+      setActiveRequest(request);
+    });
     const offAnswerDelta = window.glass.events.onAnswerDelta((payload) => {
-      setView('answers');
+      setView('workspace');
+      setAskOpen(true);
+      setActiveRequest(payload.request);
       setStreamingAnswer({ ...payload, createdAt: Date.now() });
     });
     const offAnswer = window.glass.events.onAnswer((answer) => {
-      setView('answers');
+      setView('workspace');
+      setAskOpen(true);
+      setActiveRequest(answer.request);
       setStreamingAnswer(null);
       setAnswers((current) => [answer, ...current.filter((item) => item.id !== answer.id)].slice(0, 20));
     });
     const offPreview = window.glass.events.onScreenPreview(setScreenPreview);
     const offToggle = window.glass.events.onListenToggleRequested(() => toggleListenRef.current());
     const offSmartSubmit = window.glass.events.onSmartSubmitRequested(() => smartSubmitRef.current());
+    const offFinishRequested = window.glass.events.onSessionFinishRequested(() => finishSessionRef.current());
     const offFocusComposer = window.glass.events.onComposerFocusRequested(() => {
-      setView('answers');
+      setView('workspace');
+      setAskOpen(true);
       window.requestAnimationFrame(() => questionInputRef.current?.focus());
     });
-    const offNavigation = window.glass.events.onNavigation((payload) => setView(payload.view));
+    const offNavigation = window.glass.events.onNavigation((payload) => {
+      if (payload.view === 'settings') {
+        setView('settings');
+        return;
+      }
+      setView('workspace');
+      if (payload.view === 'answers') setAskOpen(true);
+      if (payload.view === 'transcript') setListenMode('transcript');
+      if (payload.view === 'summary') setListenMode('summary');
+    });
     const offCleared = window.glass.events.onSessionCleared(() => {
       setTranscript([]);
       setAnswers([]);
       setStreamingAnswer(null);
+      setActiveRequest(null);
       setScreenPreview(null);
+      setInsights(null);
       setSummary(null);
     });
     const offSummary = window.glass.events.onSummary((payload) => {
       setSummary(payload);
-      if (!payload.partial) setView('summary');
     });
     const offSummaryState = window.glass.events.onSummaryState((payload) => setSummaryLoading(payload.loading));
+    const offInsights = window.glass.events.onInsights(setInsights);
+    const offInsightsState = window.glass.events.onInsightsState((payload) => setInsightsLoading(payload.loading));
 
     return () => {
       offStatus();
       offError();
       offListen();
+      offPhase();
       offTranscript();
+      offTranscriptRemoved();
       offAskState();
+      offRequest();
       offAnswerDelta();
       offAnswer();
       offPreview();
       offToggle();
       offSmartSubmit();
+      offFinishRequested();
       offFocusComposer();
       offNavigation();
       offCleared();
       offSummary();
       offSummaryState();
+      offInsights();
+      offInsightsState();
       audioCapture.stop();
     };
   }, []);
@@ -176,7 +224,6 @@ export function App() {
   const answerAuthReady = Boolean(
     settings && (settings.answerProvider === 'codex' ? auth.hasCodexAuth : auth.hasApiKey),
   );
-  const latestAnswer = streamingAnswer || answers[0];
   const activeModelLabel = settings?.answerProvider === 'codex' ? settings.codexModel : settings?.model;
 
   const refreshAuth = useCallback(async () => {
@@ -200,6 +247,9 @@ export function App() {
       return;
     }
 
+    if (phase === 'finished') await window.glass.session.clear();
+    setView('workspace');
+    setListenMode('transcript');
     setErrorMessage('');
     const result = await window.glass.listen.start();
     if (!result.success) {
@@ -217,7 +267,7 @@ export function App() {
       await window.glass.listen.stop();
       setErrorMessage(error instanceof Error ? error.message : 'Не удалось получить аудио');
     }
-  }, [auth.hasApiKey, settings]);
+  }, [auth.hasApiKey, phase, settings]);
 
   const stopListening = useCallback(async () => {
     capture.current.stop();
@@ -237,10 +287,12 @@ export function App() {
     }
 
     setQuestion('');
+    const shouldIncludeScreen = includeScreen;
+    setIncludeScreen(false);
+    setScreenPreview(null);
     setErrorMessage('');
     try {
-      await window.glass.ask.send(includeScreen ? { question: trimmed, includeScreen: true } : { question: trimmed });
-      setIncludeScreen(false);
+      await window.glass.ask.send(shouldIncludeScreen ? { question: trimmed, includeScreen: true } : { question: trimmed });
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : 'Не удалось получить ответ');
     }
@@ -257,11 +309,13 @@ export function App() {
 
     const typed = question.trim();
     if (typed) setQuestion('');
-    setView('answers');
+    setIncludeScreen(false);
+    setScreenPreview(null);
+    setView('workspace');
+    setAskOpen(true);
     setErrorMessage('');
     try {
       await window.glass.ask.smart(typed);
-      setIncludeScreen(false);
     } catch (error) {
       setErrorMessage(error instanceof Error ? error.message : 'Не удалось выполнить умный запрос');
     }
@@ -271,7 +325,8 @@ export function App() {
 
   const generateSummary = useCallback(async () => {
     if (summaryLoading) return;
-    setView('summary');
+    setView('workspace');
+    setListenMode('summary');
     setErrorMessage('');
     try {
       await window.glass.session.summarize();
@@ -279,6 +334,46 @@ export function App() {
       setErrorMessage(error instanceof Error ? error.message : 'Не удалось сформировать итоги');
     }
   }, [summaryLoading]);
+
+  const refreshInsights = useCallback(async () => {
+    if (insightsLoading) return;
+    setListenMode('insights');
+    try {
+      await window.glass.session.refreshInsights();
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Не удалось обновить живые выводы');
+    }
+  }, [insightsLoading]);
+
+  const finishSession = useCallback(async () => {
+    if (summaryLoading || phase === 'finishing') return;
+    capture.current.stop();
+    if (listening) await window.glass.listen.stop();
+    setView('workspace');
+    setListenMode('summary');
+    setErrorMessage('');
+    try {
+      await window.glass.session.finish();
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Не удалось завершить сессию');
+    }
+  }, [listening, phase, summaryLoading]);
+
+  finishSessionRef.current = () => void finishSession();
+
+  const askFromInsight = useCallback(
+    async (text: string) => {
+      if (!text.trim() || loadingAnswer) return;
+      setView('workspace');
+      setAskOpen(true);
+      try {
+        await window.glass.ask.send({ question: text.trim(), trigger: 'insight' });
+      } catch (error) {
+        setErrorMessage(error instanceof Error ? error.message : 'Не удалось открыть вывод в Ask');
+      }
+    },
+    [loadingAnswer],
+  );
 
   const toggleScreen = useCallback(async () => {
     if (includeScreen) {
@@ -295,15 +390,9 @@ export function App() {
     }
   }, [includeScreen]);
 
-  const copyLatest = useCallback(async () => {
-    if (!latestAnswer) return;
-    await navigator.clipboard.writeText(latestAnswer.answer);
-    setCopyState('copied');
-    window.setTimeout(() => setCopyState('idle'), 1_200);
-  }, [latestAnswer]);
-
   const clearSession = useCallback(async () => {
     await window.glass.session.clear();
+    setListenMode('transcript');
   }, []);
 
   const connectCodex = useCallback(async () => {
@@ -370,96 +459,75 @@ export function App() {
     );
   }
 
+  const hasConversation = Boolean(transcript.length || answers.length);
+
   return (
-    <main className="app-stage">
+    <main className={`app-stage original-shell phase-${phase}`}>
       <header className="command-capsule">
         <button
           className={`listen-control ${listening ? 'active' : ''}`}
-          title={`${listening ? 'Остановить' : 'Начать'} прослушивание — Ctrl+Shift+L`}
+          title={`${listening ? 'Поставить на паузу' : 'Начать прослушивание'} — Ctrl+Shift+L`}
           onClick={listening ? stopListening : startListening}
         >
-          {listening ? <MicOff size={15} /> : <Mic size={15} />}
-          <span>{listening ? 'Стоп' : 'Слушать'}</span>
+          {listening ? <Pause size={14} /> : <Play size={14} />}
+          <span>{listening ? 'Пауза' : phase === 'paused' ? 'Продолжить' : 'Слушать'}</span>
           {listening && <span className="live-dot" />}
         </button>
 
-        <nav className="view-switcher" aria-label="Разделы">
-          <ViewButton active={view === 'answers'} label="Ответы" title="Ответы и текстовый Ask — Ctrl+Shift+Q" icon={<MessageSquareText size={15} />} onClick={() => setView('answers')} />
-          <ViewButton active={view === 'transcript'} label="Текст" icon={<ScrollText size={15} />} onClick={() => setView('transcript')} />
-          <ViewButton active={view === 'summary'} label="Итоги" icon={<FileText size={15} />} onClick={() => setView('summary')} />
-          <ViewButton active={view === 'settings'} label="Настройки" icon={<SlidersHorizontal size={15} />} onClick={() => setView('settings')} />
-        </nav>
+        <button
+          className={askOpen && view === 'workspace' ? 'header-action active' : 'header-action'}
+          title="Открыть Ask — Ctrl+Shift+Q"
+          onClick={() => {
+            setView('workspace');
+            setAskOpen((current) => !current);
+            window.requestAnimationFrame(() => questionInputRef.current?.focus());
+          }}
+        >
+          <MessageSquareText size={14} />
+          <span>Ask</span>
+          <kbd>Ctrl ↵</kbd>
+        </button>
+
+        <button className="header-action" title="Скрыть RepGlass — Ctrl+\\" onClick={() => window.glass.window.hide()}>
+          <EyeOff size={14} />
+          <span>Скрыть</span>
+        </button>
 
         <div className="capsule-spacer" />
+        <span className={`session-label ${listening ? 'live' : ''}`}>{errorMessage || phaseLabel(phase, status)}</span>
+        {activeModelLabel && (
+          <span className="model-label" title="Активная модель ответов">
+            <Bot size={12} />
+            {activeModelLabel}
+          </span>
+        )}
         <span className="privacy-indicator" title="Окно защищено от захвата экрана">
-          <EyeOff size={15} />
+          <EyeOff size={14} />
         </span>
+        <button className="icon-button" title="Начать новую сессию" onClick={clearSession} disabled={!hasConversation}>
+          <Trash2 size={14} />
+        </button>
+        <button className="icon-button" title="Настройки и авторизация" onClick={() => setView('settings')}>
+          <Settings2 size={15} />
+        </button>
         <button className="icon-button capsule-hide" title="Скрыть" onClick={() => window.glass.window.hide()}>
-          <Minus size={16} />
+          <Minus size={15} />
         </button>
       </header>
 
-      <section className="workspace-panel">
-        <div className="workspace-head">
-          <div className="workspace-title">
-            <span className="brand-mark" />
-            <div>
-              <strong>{viewTitle(view)}</strong>
-              <span className={errorMessage ? 'status error-status' : 'status'}>{errorMessage || status}</span>
+      {view === 'settings' ? (
+        <section className="workspace-panel settings-workspace">
+          <div className="workspace-head">
+            <div className="workspace-title">
+              <span className="brand-mark" />
+              <div>
+                <strong>Настройки RepGlass</strong>
+                <span className={errorMessage ? 'status error-status' : 'status'}>{errorMessage || status}</span>
+              </div>
             </div>
+            <button className="secondary-button" onClick={() => setView('workspace')}>Вернуться</button>
           </div>
-          <div className="workspace-tools">
-            {view !== 'settings' && activeModelLabel && (
-              <span className="model-label">
-                <Bot size={13} />
-                {activeModelLabel}
-              </span>
-            )}
-            {view === 'answers' && (
-              <button className="icon-button" title="Копировать последний ответ" onClick={copyLatest} disabled={!latestAnswer}>
-                {copyState === 'copied' ? <Check size={15} /> : <Copy size={15} />}
-              </button>
-            )}
-            {view !== 'settings' && (
-              <button className="icon-button" title="Очистить сессию" onClick={clearSession} disabled={!answers.length && !transcript.length}>
-                <Trash2 size={15} />
-              </button>
-            )}
-            <button className="icon-button" title="Настройки" onClick={() => setView('settings')}>
-              <Settings2 size={15} />
-            </button>
-            <button className="icon-button" title="Скрыть" onClick={() => window.glass.window.hide()}>
-              <X size={15} />
-            </button>
-          </div>
-        </div>
-
-        <div className="workspace-body">
-          {view === 'answers' && (
-            <AnswersView
-              answers={answers}
-              streaming={streamingAnswer}
-              loading={loadingAnswer}
-              listening={listening}
-              status={status}
-              authReady={answerAuthReady}
-              screenPreview={screenPreview}
-              onOpenSettings={() => {
-                setView('settings');
-                setSettingsTab('connection');
-              }}
-            />
-          )}
-          {view === 'transcript' && <TranscriptView turns={transcript} listening={listening} />}
-          {view === 'summary' && (
-            <SummaryView
-              summary={summary}
-              loading={summaryLoading}
-              hasConversation={Boolean(transcript.length || answers.length)}
-              onGenerate={generateSummary}
-            />
-          )}
-          {view === 'settings' && (
+          <div className="workspace-body">
             <SettingsView
               tab={settingsTab}
               onTabChange={setSettingsTab}
@@ -479,22 +547,57 @@ export function App() {
               onOpenApiKeys={() => window.glass.window.openExternal(API_KEYS_URL)}
               onUpdateSettings={updateSettings}
             />
-          )}
-        </div>
-
-        {view !== 'settings' && (
-          <Composer
-            question={question}
-            loading={loadingAnswer}
-            includeScreen={includeScreen}
-            preview={screenPreview}
-            inputRef={questionInputRef}
-            onQuestionChange={setQuestion}
-            onToggleScreen={toggleScreen}
-            onSend={sendQuestion}
+          </div>
+        </section>
+      ) : (
+        <section className={askOpen ? 'glass-workspace ask-visible' : 'glass-workspace'}>
+          <ListenPanel
+            mode={listenMode}
+            onModeChange={setListenMode}
+            transcript={transcript}
+            insights={insights}
+            insightsLoading={insightsLoading}
+            summary={summary}
+            summaryLoading={summaryLoading}
+            listening={listening}
+            phase={phase}
+            hasConversation={hasConversation}
+            onRefreshInsights={refreshInsights}
+            onGenerateSummary={generateSummary}
+            onFinish={finishSession}
+            onAskInsight={askFromInsight}
           />
-        )}
-      </section>
+
+          {askOpen && (
+            <section className="feature-panel ask-panel">
+              <AnswersView
+                answers={answers}
+                streaming={streamingAnswer}
+                request={activeRequest}
+                loading={loadingAnswer}
+                listening={listening}
+                status={status}
+                authReady={answerAuthReady}
+                onClose={() => setAskOpen(false)}
+                onOpenSettings={() => {
+                  setView('settings');
+                  setSettingsTab('connection');
+                }}
+              />
+              <Composer
+                question={question}
+                loading={loadingAnswer}
+                includeScreen={includeScreen}
+                preview={screenPreview}
+                inputRef={questionInputRef}
+                onQuestionChange={setQuestion}
+                onToggleScreen={toggleScreen}
+                onSend={sendQuestion}
+              />
+            </section>
+          )}
+        </section>
+      )}
     </main>
   );
 }
@@ -508,52 +611,171 @@ function ViewButton(props: { active: boolean; label: string; title?: string; ico
   );
 }
 
+function ListenPanel(props: {
+  mode: ListenMode;
+  onModeChange: (mode: ListenMode) => void;
+  transcript: TranscriptTurn[];
+  insights: SessionInsightsPayload | null;
+  insightsLoading: boolean;
+  summary: SessionSummaryPayload | null;
+  summaryLoading: boolean;
+  listening: boolean;
+  phase: SessionPhase;
+  hasConversation: boolean;
+  onRefreshInsights: () => void;
+  onGenerateSummary: () => void;
+  onFinish: () => void;
+  onAskInsight: (text: string) => void;
+}) {
+  return (
+    <section className="feature-panel listen-panel">
+      <div className="feature-bar">
+        <div className="feature-title">
+          <span className={props.listening ? 'audio-status active' : 'audio-status'}><AudioLines size={14} /></span>
+          <div>
+            <strong>{props.listening ? 'RepGlass слушает' : phaseLabel(props.phase, 'Готово')}</strong>
+            <small>{props.transcript.length ? `${props.transcript.length} реплик в контексте` : 'Микрофон + системный звук'}</small>
+          </div>
+        </div>
+        <nav className="panel-mode-switcher" aria-label="Режим Listen">
+          <ViewButton active={props.mode === 'transcript'} label="Текст" title="Живая транскрипция" icon={<ScrollText size={13} />} onClick={() => props.onModeChange('transcript')} />
+          <ViewButton active={props.mode === 'insights'} label="Выводы" title="Живые выводы" icon={<Lightbulb size={13} />} onClick={() => props.onModeChange('insights')} />
+          <ViewButton active={props.mode === 'summary'} label="Итоги" title="Финальные итоги" icon={<FileText size={13} />} onClick={() => props.onModeChange('summary')} />
+        </nav>
+      </div>
+
+      <div className="feature-content listen-content">
+        {props.mode === 'transcript' && <TranscriptView turns={props.transcript} listening={props.listening} />}
+        {props.mode === 'insights' && (
+          <InsightsView
+            insights={props.insights}
+            loading={props.insightsLoading}
+            hasConversation={props.hasConversation}
+            onRefresh={props.onRefreshInsights}
+            onAsk={props.onAskInsight}
+          />
+        )}
+        {props.mode === 'summary' && (
+          <SummaryView
+            summary={props.summary}
+            loading={props.summaryLoading}
+            hasConversation={props.hasConversation}
+            phase={props.phase}
+            onGenerate={props.onGenerateSummary}
+            onAsk={props.onAskInsight}
+          />
+        )}
+      </div>
+
+      <div className="listen-footer">
+        <span>{props.listening ? 'Два независимых STT-канала активны' : props.phase === 'paused' ? 'Контекст сохранён' : 'Сессия не запущена'}</span>
+        <button className="secondary-button finish-button" onClick={props.onFinish} disabled={!props.hasConversation || props.summaryLoading || props.phase === 'finishing'}>
+          {props.summaryLoading || props.phase === 'finishing' ? <RefreshCw className="spin" size={13} /> : <FileText size={13} />}
+          <span>Завершить</span>
+        </button>
+      </div>
+    </section>
+  );
+}
+
 function AnswersView(props: {
   answers: AnswerPayload[];
   streaming: AnswerPayload | null;
+  request: AssistantRequestPayload | null;
   loading: boolean;
   listening: boolean;
   status: string;
   authReady: boolean;
-  screenPreview: ScreenCapturePayload | null;
+  onClose: () => void;
   onOpenSettings: () => void;
 }) {
-  const visibleAnswers = props.streaming
-    ? [props.streaming, ...props.answers.filter((answer) => answer.id !== props.streaming?.id)]
-    : props.answers;
-
-  if (!visibleAnswers.length) {
-    return (
-      <div className="empty-state">
-        <div className={props.listening ? 'listening-orbit active' : 'listening-orbit'}>
-          <AudioLines size={28} />
-        </div>
-        <h1>{props.listening ? 'Слушаю разговор' : 'Готов к работе'}</h1>
-        <p>{props.loading ? 'Готовлю первый ответ' : props.status}</p>
-        {!props.authReady && (
-          <button className="text-command" onClick={props.onOpenSettings}>
-            Подключить OpenAI
-          </button>
-        )}
-      </div>
-    );
-  }
+  const visibleAnswers = useMemo(
+    () =>
+      props.streaming
+        ? [props.streaming, ...props.answers.filter((answer) => answer.id !== props.streaming?.id)]
+        : props.answers,
+    [props.answers, props.streaming],
+  );
+  const [answerIndex, setAnswerIndex] = useState(0);
+  const [copied, setCopied] = useState(false);
+  const newestId = visibleAnswers[0]?.id;
+  useEffect(() => setAnswerIndex(0), [newestId]);
+  const selectedAnswer = visibleAnswers[Math.min(answerIndex, Math.max(0, visibleAnswers.length - 1))] || null;
+  const showingPendingRequest = Boolean(props.loading && props.request && props.request.id !== selectedAnswer?.id);
+  const activeAnswer = showingPendingRequest ? null : selectedAnswer;
+  const activeRequest = showingPendingRequest ? props.request : activeAnswer?.request || props.request;
+  const isStreaming = Boolean(props.streaming && activeAnswer?.id === props.streaming.id);
 
   return (
-    <div className="answer-feed">
-      {props.screenPreview && (
-        <div className="screen-context-strip">
-          <img src={props.screenPreview.dataUrl} alt="Контекст экрана" />
+    <>
+      <div className="feature-bar ask-bar">
+        <div className="feature-title">
+          <span className="ask-status"><Sparkles size={14} /></span>
           <div>
-            <span>Контекст экрана</span>
-            <small>{props.screenPreview.displayName}</small>
+            <strong>{props.loading ? 'Готовлю ответ' : activeAnswer ? 'AI Response' : 'Ask'}</strong>
+            <small>{activeRequest ? requestTriggerLabel(activeRequest.trigger) : 'Текст, аудио или экран'}</small>
           </div>
-          <ShieldCheck size={15} />
         </div>
+        <div className="ask-controls">
+          <button className="icon-button" title="Предыдущий ответ" disabled={answerIndex >= visibleAnswers.length - 1} onClick={() => setAnswerIndex((index) => Math.min(visibleAnswers.length - 1, index + 1))}>
+            <ChevronLeft size={14} />
+          </button>
+          <span className="history-position">{visibleAnswers.length ? `${answerIndex + 1}/${visibleAnswers.length}` : '0/0'}</span>
+          <button className="icon-button" title="Следующий ответ" disabled={answerIndex <= 0} onClick={() => setAnswerIndex((index) => Math.max(0, index - 1))}>
+            <ChevronRight size={14} />
+          </button>
+          <button
+            className="icon-button"
+            title="Копировать текущий ответ"
+            disabled={!activeAnswer}
+            onClick={async () => {
+              if (!activeAnswer) return;
+              await navigator.clipboard.writeText(activeAnswer.answer);
+              setCopied(true);
+              window.setTimeout(() => setCopied(false), 1_000);
+            }}
+          >
+            {copied ? <Check size={14} /> : <Copy size={14} />}
+          </button>
+          <button className="icon-button" title="Закрыть Ask" onClick={props.onClose}><X size={14} /></button>
+        </div>
+      </div>
+
+      <div className="feature-content ask-content">
+        {activeRequest && <RequestContext request={activeRequest} />}
+        {activeAnswer ? (
+          <AnswerCard answer={activeAnswer} streaming={isStreaming} />
+        ) : (
+          <div className="empty-state ask-empty">
+            <div className={props.listening ? 'listening-orbit active' : 'listening-orbit'}><MessageSquareText size={25} /></div>
+            <h1>{props.listening ? 'Жду вопрос собеседника' : 'Задайте вопрос'}</h1>
+            <p>{props.loading ? 'Анализирую контекст' : props.status}</p>
+            {!props.authReady && <button className="text-command" onClick={props.onOpenSettings}>Подключить OpenAI</button>}
+          </div>
+        )}
+      </div>
+    </>
+  );
+}
+
+function RequestContext(props: { request: AssistantRequestPayload }) {
+  return (
+    <div className="request-context">
+      <div className="request-heading">
+        <div className="source-chips">
+          {props.request.sources.map((source) => (
+            <span className={`source-chip source-${source}`} key={source}>{requestSourceLabel(source)}</span>
+          ))}
+        </div>
+        <span className="request-time">{new Date(props.request.createdAt).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}</span>
+      </div>
+      <p>{props.request.question}</p>
+      {props.request.screen && (
+        <figure className="request-screen">
+          <img src={props.request.screen.dataUrl} alt="Снимок, использованный для ответа" />
+          <figcaption><Monitor size={12} /> Анализ экрана · {props.request.screen.displayName}</figcaption>
+        </figure>
       )}
-      {visibleAnswers.map((answer, index) => (
-        <AnswerCard key={answer.id} answer={answer} streaming={index === 0 && props.streaming?.id === answer.id} />
-      ))}
     </div>
   );
 }
@@ -562,11 +784,11 @@ function AnswerCard(props: { answer: AnswerPayload; streaming: boolean }) {
   const [copied, setCopied] = useState(false);
   const icon = categoryIcon(props.answer.category);
   return (
-    <article className={props.streaming ? 'answer-card streaming' : 'answer-card'}>
-      <div className="answer-meta">
+    <article className={props.streaming ? 'answer-detail streaming' : 'answer-detail'}>
+      <div className="answer-meta answer-detail-meta">
         <span className={`category-icon category-${props.answer.category}`}>{icon}</span>
-        <div className="answer-question">{props.answer.question}</div>
-        {props.answer.usedScreen && <ImageIcon size={14} className="screen-used" />}
+        <div className="answer-question">Подготовленный ответ</div>
+        {props.answer.usedScreen && <span className="screen-used"><ImageIcon size={13} /> Экран учтён</span>}
         <button
           className="icon-button small"
           title="Копировать ответ"
@@ -617,11 +839,62 @@ function TranscriptView(props: { turns: TranscriptTurn[]; listening: boolean }) 
   );
 }
 
+function InsightsView(props: {
+  insights: SessionInsightsPayload | null;
+  loading: boolean;
+  hasConversation: boolean;
+  onRefresh: () => void;
+  onAsk: (text: string) => void;
+}) {
+  if (!props.insights) {
+    return (
+      <div className="empty-state insights-empty">
+        <div className={props.loading ? 'listening-orbit active' : 'listening-orbit'}><Lightbulb size={25} /></div>
+        <h1>{props.loading ? 'Обновляю выводы' : 'Живые выводы'}</h1>
+        <p>Появляются каждые пять реплик и не прерывают разговор</p>
+        <button className="secondary-button" onClick={props.onRefresh} disabled={!props.hasConversation || props.loading}>
+          <RefreshCw className={props.loading ? 'spin' : undefined} size={14} />
+          <span>Обновить сейчас</span>
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="insights-view">
+      <div className="insights-meta">
+        <span>{props.insights.transcriptCount} реплик проанализировано</span>
+        <button className="icon-button" title="Обновить живые выводы" onClick={props.onRefresh} disabled={props.loading}>
+          <RefreshCw className={props.loading ? 'spin' : undefined} size={14} />
+        </button>
+      </div>
+      <div className="markdown-answer interactive-insights">
+        <ReactMarkdown
+          remarkPlugins={[remarkGfm]}
+          components={{
+            li: ({ children }) => (
+              <li>
+                <button className="insight-action" title="Открыть в Ask" onClick={() => props.onAsk(reactNodeText(children))}>
+                  {children}
+                </button>
+              </li>
+            ),
+          }}
+        >
+          {props.insights.text}
+        </ReactMarkdown>
+      </div>
+    </div>
+  );
+}
+
 function SummaryView(props: {
   summary: SessionSummaryPayload | null;
   loading: boolean;
   hasConversation: boolean;
+  phase: SessionPhase;
   onGenerate: () => void;
+  onAsk: (text: string) => void;
 }) {
   if (!props.summary) {
     return (
@@ -630,10 +903,10 @@ function SummaryView(props: {
           <FileText size={27} />
         </div>
         <h1>{props.loading ? 'Формирую итоги' : 'Итоги текущей сессии'}</h1>
-        <p>{props.loading ? 'Анализирую разговор и ответы' : 'Итоги появятся после остановки прослушивания'}</p>
+        <p>{props.loading ? 'Анализирую полный разговор и ответы' : 'Завершите сессию, чтобы зафиксировать финальный результат'}</p>
         <button className="primary-button" onClick={props.onGenerate} disabled={!props.hasConversation || props.loading}>
           {props.loading ? <RefreshCw className="spin" size={15} /> : <FileText size={15} />}
-          <span>Сформировать итоги</span>
+          <span>{props.phase === 'finished' ? 'Обновить итоги' : 'Предпросмотр итогов'}</span>
         </button>
       </div>
     );
@@ -649,8 +922,21 @@ function SummaryView(props: {
             <RefreshCw className={props.loading ? 'spin' : undefined} size={14} />
           </button>
         </div>
-        <div className="markdown-answer">
-          <ReactMarkdown remarkPlugins={[remarkGfm]}>{props.summary.text}</ReactMarkdown>
+        <div className="markdown-answer interactive-summary">
+          <ReactMarkdown
+            remarkPlugins={[remarkGfm]}
+            components={{
+              li: ({ children }) => (
+                <li>
+                  <button className="insight-action" title="Открыть пункт в Ask" onClick={() => props.onAsk(reactNodeText(children))}>
+                    {children}
+                  </button>
+                </li>
+              ),
+            }}
+          >
+            {props.summary.text}
+          </ReactMarkdown>
         </div>
       </article>
     </div>
@@ -1062,11 +1348,33 @@ function ToggleRow(props: {
   );
 }
 
-function viewTitle(view: View): string {
-  if (view === 'transcript') return 'Транскрипция';
-  if (view === 'summary') return 'Итоги сессии';
-  if (view === 'settings') return 'Настройки';
-  return 'Живые ответы';
+function phaseLabel(phase: SessionPhase, fallback: string): string {
+  if (phase === 'listening') return 'Слушаю';
+  if (phase === 'paused') return 'Пауза';
+  if (phase === 'finishing') return 'Формирую итоги';
+  if (phase === 'finished') return 'Сессия завершена';
+  return fallback;
+}
+
+function requestSourceLabel(source: AssistantRequestPayload['sources'][number]): string {
+  if (source === 'audio') return 'Аудио';
+  if (source === 'screen') return 'Экран';
+  return 'Текст';
+}
+
+function requestTriggerLabel(trigger: AssistantRequestPayload['trigger']): string {
+  if (trigger === 'auto') return 'Вопрос собеседника';
+  if (trigger === 'hotkey') return 'Умный запрос Ctrl+Enter';
+  if (trigger === 'insight') return 'Запрос из живых выводов';
+  return 'Ручной вопрос';
+}
+
+function reactNodeText(node: ReactNode): string {
+  if (node === null || node === undefined || typeof node === 'boolean') return '';
+  if (typeof node === 'string' || typeof node === 'number') return String(node);
+  if (Array.isArray(node)) return node.map(reactNodeText).join(' ');
+  if (isValidElement<{ children?: ReactNode }>(node)) return reactNodeText(node.props.children);
+  return '';
 }
 
 function categoryIcon(category: AnswerPayload['category']): ReactNode {

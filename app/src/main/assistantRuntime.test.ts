@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { AssistantRuntime } from './assistantRuntime';
 import type { CodexService } from './codexService';
 import { DEFAULT_SETTINGS } from './defaults';
+import { isLikelyTranscriptDuplicate } from './transcriptDedup';
 
 function createRuntime() {
   const events: Array<{ channel: string; payload: unknown }> = [];
@@ -73,6 +74,9 @@ describe('assistant session workflow', () => {
       }),
     );
     expect(answer.usedScreen).toBe(true);
+    expect(answer.request).toEqual(
+      expect.objectContaining({ trigger: 'hotkey', sources: ['screen'], screen: expect.objectContaining({ displayName: 'Screen 1' }) }),
+    );
     expect(dispose).toHaveBeenCalledOnce();
   });
 
@@ -82,7 +86,7 @@ describe('assistant session workflow', () => {
 
     runtime.clearSession();
 
-    expect(runtime.getSessionState()).toEqual({ transcript: [], answers: [], summary: null });
+    expect(runtime.getSessionState()).toEqual({ phase: 'idle', transcript: [], answers: [], insights: null, summary: null });
     expect(resetConversation).toHaveBeenCalledOnce();
   });
 
@@ -103,6 +107,25 @@ describe('assistant session workflow', () => {
     expect(events).toContainEqual(expect.objectContaining({ channel: 'session:summary', payload: summary }));
   });
 
+  it('separates live insights from explicit session completion', async () => {
+    const { runtime, answerQuestion, events } = createRuntime();
+    const internals = runtime as unknown as RuntimeInternals;
+    await internals.handleFinalTranscript('microphone', 'me-insight-1', 'Я рассказал про архитектуру тестов.');
+    await internals.handleFinalTranscript('system', 'them-insight-1', 'Продолжайте, пожалуйста.');
+    answerQuestion.mockResolvedValueOnce('**Сейчас обсуждают**\n- Архитектура автотестов');
+
+    const insights = await runtime.refreshInsights();
+
+    expect(insights.text).toContain('Архитектура автотестов');
+    expect(runtime.getSessionState()).toEqual(expect.objectContaining({ phase: 'idle', insights, summary: null }));
+    expect(events).toContainEqual({ channel: 'session:insights', payload: insights });
+
+    answerQuestion.mockResolvedValueOnce('## Финальные итоги\nИнтервью завершено.');
+    const summary = await runtime.finishSession();
+    expect(summary.text).toContain('Финальные итоги');
+    expect(runtime.getSessionState().phase).toBe('finished');
+  });
+
   it('does not truncate launch context to the last twenty transcript turns', async () => {
     const { runtime, answerQuestion } = createRuntime();
     const internals = runtime as unknown as RuntimeInternals;
@@ -116,5 +139,48 @@ describe('assistant session workflow', () => {
     expect(conversation).toHaveLength(26);
     expect(conversation[0]).toBe('Вы: Моя реплика номер 1.');
     expect(conversation.at(-1)).toBe('Собеседник: Какие выводы можно сделать?');
+  });
+
+  it('removes a speaker echo that reached the microphone before system transcription', async () => {
+    const { runtime, events } = createRuntime();
+    const internals = runtime as unknown as RuntimeInternals;
+
+    await internals.handleFinalTranscript('microphone', 'mic-echo', 'Расскажите, как работает REST API?');
+    await internals.handleFinalTranscript('system', 'system-original', 'Расскажите как работает REST API');
+
+    expect(runtime.getSessionState().transcript).toEqual([
+      expect.objectContaining({ id: 'system:system-original', speaker: 'them' }),
+    ]);
+    expect(events).toContainEqual({
+      channel: 'listen:transcript-removed',
+      payload: { id: 'microphone:mic-echo', reason: 'system-echo' },
+    });
+  });
+
+  it('drops a microphone echo when the system transcription is already known', async () => {
+    const { runtime, events } = createRuntime();
+    const internals = runtime as unknown as RuntimeInternals;
+
+    await internals.handleFinalTranscript('system', 'system-first', 'Что такое нагрузочное тестирование?');
+    await internals.handleFinalTranscript('microphone', 'mic-later', 'Что такое нагрузочное тестирование');
+
+    expect(runtime.getSessionState().transcript).toHaveLength(1);
+    expect(events).toContainEqual({
+      channel: 'listen:transcript-removed',
+      payload: { id: 'microphone:mic-later', reason: 'system-echo' },
+    });
+  });
+});
+
+describe('cross-channel transcript deduplication', () => {
+  it.each([
+    ['Как устроен Playwright?', 'как устроен playwright'],
+    ['Объясните REST API подробнее', 'REST API подробнее'],
+  ])('recognizes the same phrase: %s', (left, right) => {
+    expect(isLikelyTranscriptDuplicate(left, right)).toBe(true);
+  });
+
+  it('keeps genuinely different simultaneous speech', () => {
+    expect(isLikelyTranscriptDuplicate('Я использовал Playwright', 'Почему выбрали Selenium?')).toBe(false);
   });
 });
