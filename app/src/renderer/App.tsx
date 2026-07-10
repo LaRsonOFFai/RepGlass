@@ -774,6 +774,7 @@ function SettingsView(props: {
             <Segmented
               value={props.settings.captureSource}
               options={[
+                { value: 'both', label: 'Оба источника', icon: <AudioLines size={15} /> },
                 { value: 'system', label: 'Системный звук', icon: <Volume2 size={15} /> },
                 { value: 'microphone', label: 'Микрофон', icon: <Mic size={15} /> },
               ]}

@@ -19,8 +19,8 @@ Electron main
 
 - `codexService.ts` запускает официальный bundled `codex.exe app-server --stdio` скрытым
   дочерним процессом, выполняет OAuth, получает список моделей и обрабатывает поток turns.
-- `realtimeTranscriptionService.ts` принимает PCM 24 kHz и обрабатывает partial/final events
-  `GPT-Realtime-Whisper`.
+- `realtimeTranscriptionService.ts` открывает Realtime WebSocket с `intent=transcription`,
+  передаёт PCM 24 kHz и обрабатывает partial/final events `GPT-Realtime-Whisper`.
 - `assistantRuntime.ts` связывает транскрипцию, детектор вопросов, очередь автоответов,
   персонализацию и screen context.
 - `screenCaptureService.ts` получает текущий display, создаёт временный PNG и удаляет его после
@@ -29,8 +29,9 @@ Electron main
 
 ## Renderer
 
-Renderer не имеет Node integration. AudioWorklet преобразует входной поток в mono PCM16
-24 kHz, локальный VAD режет речь на фразы и добавляет pre-roll, чтобы не терять первые слова.
+Renderer не имеет Node integration. По умолчанию системный loopback и микрофон смешиваются
+через Web Audio gain-узлы. AudioWorklet преобразует результат в mono PCM16 24 kHz, а локальный
+VAD режет речь на фразы и добавляет pre-roll, чтобы не терять первые слова.
 
 Интерфейс состоит из одного overlay: команды, лента карточек, live-транскрипция, подключение,
 персонализация, аудио и приватность. Дополнительные технические окна не создаются.

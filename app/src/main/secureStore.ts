@@ -1,7 +1,7 @@
 import { app, safeStorage } from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
-import { normalizeSettings } from './defaults';
+import { migrateSettings, normalizeSettings, SETTINGS_SCHEMA_VERSION } from './defaults';
 import type { AppSettings, AuthState } from './types';
 
 type CodexStatus = {
@@ -16,6 +16,7 @@ type CodexStatus = {
 type StoreShape = {
   encryptedOpenAIKey?: string;
   openAIKeyEncryption?: 'safeStorage-v1';
+  settingsVersion?: number;
   settings?: Partial<AppSettings>;
 };
 
@@ -84,14 +85,23 @@ export class SecureStore {
 
   getSettings(): AppSettings {
     const store = this.read();
-    return normalizeSettings(store.settings);
+    const currentVersion = store.settingsVersion || 0;
+    const settings = normalizeSettings(migrateSettings(store.settings, currentVersion));
+    if (currentVersion < SETTINGS_SCHEMA_VERSION) {
+      this.write({ ...store, settings, settingsVersion: SETTINGS_SCHEMA_VERSION });
+    }
+    return settings;
   }
 
   updateSettings(patch: Partial<AppSettings>): AppSettings {
     const current = this.getSettings();
     const next = normalizeSettings({ ...current, ...patch });
     const store = this.read();
-    this.write({ ...store, settings: next });
+    this.write({
+      ...store,
+      settings: next,
+      settingsVersion: Math.max(store.settingsVersion || 0, SETTINGS_SCHEMA_VERSION),
+    });
     return next;
   }
 

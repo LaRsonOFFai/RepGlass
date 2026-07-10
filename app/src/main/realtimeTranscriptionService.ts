@@ -24,7 +24,7 @@ type RealtimeEvent = {
   error?: { message?: string };
 };
 
-const REALTIME_URL = 'wss://api.openai.com/v1/realtime?model=gpt-realtime-whisper';
+export const REALTIME_TRANSCRIPTION_URL = 'wss://api.openai.com/v1/realtime?intent=transcription';
 
 export class RealtimeTranscriptionService {
   private socket: WebSocket | null = null;
@@ -39,7 +39,7 @@ export class RealtimeTranscriptionService {
     this.callbacks = params.callbacks;
     this.closing = false;
 
-    const socket = new WebSocket(params.endpoint || REALTIME_URL, {
+    const socket = new WebSocket(params.endpoint || REALTIME_TRANSCRIPTION_URL, {
       headers: {
         Authorization: `Bearer ${params.apiKey}`,
       },

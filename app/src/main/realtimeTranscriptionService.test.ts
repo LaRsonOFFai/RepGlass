@@ -1,7 +1,7 @@
 import type { AddressInfo } from 'node:net';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { WebSocketServer, type WebSocket } from 'ws';
-import { RealtimeTranscriptionService } from './realtimeTranscriptionService';
+import { REALTIME_TRANSCRIPTION_URL, RealtimeTranscriptionService } from './realtimeTranscriptionService';
 
 describe('realtime transcription protocol', () => {
   let server: WebSocketServer | undefined;
@@ -11,6 +11,12 @@ describe('realtime transcription protocol', () => {
     service?.stop(false);
     for (const client of server?.clients || []) client.terminate();
     if (server) await new Promise<void>((resolve) => server?.close(() => resolve()));
+  });
+
+  it('opens a transcription session instead of treating the STT model as a realtime model', () => {
+    const url = new URL(REALTIME_TRANSCRIPTION_URL);
+    expect(url.searchParams.get('intent')).toBe('transcription');
+    expect(url.searchParams.has('model')).toBe(false);
   });
 
   it('streams PCM24k audio and emits Russian partial and final text', async () => {

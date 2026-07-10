@@ -1,4 +1,4 @@
-export type CaptureSource = 'microphone' | 'system';
+export type CaptureSource = 'both' | 'microphone' | 'system';
 export type AnswerProvider = 'codex' | 'openai-api';
 export type InterviewProfile = 'developer' | 'aqa' | 'manual-qa' | 'load-qa' | 'general' | 'custom';
 export type AnswerDetail = 'brief' | 'balanced' | 'detailed';

@@ -7,6 +7,8 @@ import type {
   TranscriptionDelay,
 } from './types';
 
+export const SETTINGS_SCHEMA_VERSION = 2;
+
 export const DEFAULT_SETTINGS: AppSettings = {
   answerProvider: 'codex',
   model: 'gpt-5.4-mini',
@@ -14,7 +16,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   transcriptionModel: 'gpt-realtime-whisper',
   transcriptionDelay: 'low',
   language: 'ru',
-  captureSource: 'system',
+  captureSource: 'both',
   autoAnswer: true,
   answerCooldownMs: 4_500,
   chunkMs: 100,
@@ -75,6 +77,16 @@ const profiles: InterviewProfile[] = ['developer', 'aqa', 'manual-qa', 'load-qa'
 const answerDetails: AnswerDetail[] = ['brief', 'balanced', 'detailed'];
 const reasoningEfforts: ReasoningEffort[] = ['low', 'medium', 'high'];
 const screenModes: ScreenContextMode[] = ['off', 'smart', 'always'];
+const captureSources: AppSettings['captureSource'][] = ['both', 'system', 'microphone'];
+
+export function migrateSettings(
+  candidate?: Partial<AppSettings>,
+  schemaVersion = SETTINGS_SCHEMA_VERSION,
+): Partial<AppSettings> {
+  const migrated = { ...(candidate || {}) };
+  if (schemaVersion < 2 && migrated.captureSource === 'system') migrated.captureSource = 'both';
+  return migrated;
+}
 
 export function normalizeSettings(candidate?: Partial<AppSettings>): AppSettings {
   const next = { ...DEFAULT_SETTINGS, ...(candidate || {}) };
@@ -86,7 +98,7 @@ export function normalizeSettings(candidate?: Partial<AppSettings>): AppSettings
     transcriptionModel: 'gpt-realtime-whisper',
     transcriptionDelay: includes(transcriptionDelays, next.transcriptionDelay, DEFAULT_SETTINGS.transcriptionDelay),
     language: stringValue(next.language, DEFAULT_SETTINGS.language).slice(0, 12),
-    captureSource: next.captureSource === 'microphone' ? 'microphone' : 'system',
+    captureSource: includes(captureSources, next.captureSource, DEFAULT_SETTINGS.captureSource),
     autoAnswer: Boolean(next.autoAnswer),
     answerCooldownMs: clampNumber(next.answerCooldownMs, 2_000, 60_000, DEFAULT_SETTINGS.answerCooldownMs),
     chunkMs: clampNumber(next.chunkMs, 40, 500, DEFAULT_SETTINGS.chunkMs),
