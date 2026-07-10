@@ -70,10 +70,18 @@ async function run() {
   await fs.access(executable);
   const port = await reservePort();
   const endpoint = `http://127.0.0.1:${port}`;
+  const codexHome = path.join(userData, 'codex-home');
+  await fs.mkdir(codexHome, { recursive: true });
   const processHandle = spawn(
     executable,
     [`--user-data-dir=${userData}`, '--remote-debugging-address=127.0.0.1', `--remote-debugging-port=${port}`],
-    { stdio: 'ignore' },
+    {
+      stdio: 'ignore',
+      env: {
+        ...process.env,
+        CODEX_HOME: codexHome,
+      },
+    },
   );
   let cdp;
 
@@ -111,6 +119,8 @@ async function run() {
         title: document.title,
         workspaceVisible: Boolean(document.querySelector('.workspace-panel')),
         hasPreloadApi: Boolean(window.glass),
+        codexAvailable: codex.available,
+        codexLoggedIn: codex.loggedIn,
         codexVersion: codex.version,
         codexError: codex.error
       };
@@ -120,7 +130,7 @@ async function run() {
     if (result.title !== 'RepGlass' || !result.workspaceVisible || !result.hasPreloadApi) {
       throw new Error(`Packaged renderer is incomplete: ${JSON.stringify(result)}`);
     }
-    if (!/^\d+\.\d+\.\d+/.test(result.codexVersion || '') || result.codexError) {
+    if (!result.codexAvailable || !/^\d+\.\d+\.\d+/.test(result.codexVersion || '')) {
       throw new Error(`Bundled Codex App Server failed: ${result.codexError || result.codexVersion || 'no version'}`);
     }
 
