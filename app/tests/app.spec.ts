@@ -132,6 +132,27 @@ test('keeps the screenshot attached to the answer that used it', async ({ browse
   await page.screenshot({ path: testInfo.outputPath('repglass-anchored-screen-answer.png') });
 });
 
+test('reflows Listen and Ask without overlap in a narrow overlay', async ({ browserName: _browserName }, testInfo) => {
+  await electronApp.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.setSize(520, 620));
+  await page.waitForTimeout(180);
+
+  const layout = await page.evaluate(() => {
+    const listen = document.querySelector('.listen-panel')?.getBoundingClientRect();
+    const ask = document.querySelector('.ask-panel')?.getBoundingClientRect();
+    return {
+      bodyWidth: document.body.scrollWidth,
+      viewportWidth: window.innerWidth,
+      listenBottom: listen?.bottom || 0,
+      askTop: ask?.top || 0,
+    };
+  });
+  expect(layout.bodyWidth).toBeLessThanOrEqual(layout.viewportWidth);
+  expect(layout.askTop).toBeGreaterThanOrEqual(layout.listenBottom);
+  await page.screenshot({ path: testInfo.outputPath('repglass-narrow-workspace.png') });
+
+  await electronApp.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]?.setSize(980, 620));
+});
+
 test('streams a live Codex answer with screen context', async () => {
   test.skip(process.env.REPGLASS_LIVE_CODEX !== '1', 'Live Codex smoke test is opt-in');
   test.setTimeout(120_000);
