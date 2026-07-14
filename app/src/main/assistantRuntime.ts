@@ -7,6 +7,7 @@ import { RealtimeTranscriptionService } from './realtimeTranscriptionService';
 import type { CapturedScreen } from './screenCaptureService';
 import { isLikelyTranscriptDuplicate } from './transcriptDedup';
 import { buildInterviewCoach, buildInterviewContextPacket, hasInterviewContext } from './interviewContext';
+import { NarrativeTracker } from './narrativeTracker';
 import type {
   AnswerPayload,
   AppSettings,
@@ -16,6 +17,7 @@ import type {
   InterviewCoachPayload,
   InterviewContextState,
   LabeledAudioChunkPayload,
+  NarrativeNavigationRequest,
   RequestSource,
   RequestTrigger,
   SessionInsightsPayload,
@@ -67,6 +69,7 @@ export class AssistantRuntime {
   private readonly transcript: TranscriptTurn[] = [];
   private readonly context: ContextEntry[] = [];
   private readonly answers: AnswerPayload[] = [];
+  private readonly narrativeTracker = new NarrativeTracker();
   private transcriptCount = 0;
   private phase: SessionPhase = 'idle';
   private insights: SessionInsightsPayload | null = null;
@@ -236,6 +239,7 @@ export class AssistantRuntime {
     this.insights = null;
     this.summary = null;
     this.coach = null;
+    this.narrativeTracker.resetSession();
     this.sessionGeneration += 1;
     this.codex.resetConversation();
     this.lastSignature = '';
@@ -282,15 +286,27 @@ export class AssistantRuntime {
     }
   }
 
-  refreshInterviewContext(): InterviewCoachPayload | null {
+  refreshInterviewContext(questionOverride?: string): InterviewCoachPayload | null {
     const state = this.deps.getInterviewContext();
-    if (!state.enabled || !state.predictiveAssist || !hasInterviewContext(state)) {
+    if (!state.enabled || !hasInterviewContext(state)) {
       this.coach = null;
       this.emit('context:coach', null);
       return null;
     }
+    const latestQuestion = questionOverride ?? [...this.transcript].reverse().find((turn) => turn.speaker === 'them')?.text ?? '';
+    this.coach = buildInterviewCoach(state, latestQuestion, this.context.map((entry) => entry.text));
+    this.coach.narrativeProgress = this.narrativeTracker.getProgress(state);
+    this.emit('context:coach', this.coach);
+    return cloneCoach(this.coach);
+  }
+
+  navigateNarrative(request: NarrativeNavigationRequest): InterviewCoachPayload | null {
+    const state = this.deps.getInterviewContext();
+    if (!state.enabled || !hasInterviewContext(state)) return null;
+    const progress = this.narrativeTracker.navigate(state, request);
     const latestQuestion = [...this.transcript].reverse().find((turn) => turn.speaker === 'them')?.text || '';
     this.coach = buildInterviewCoach(state, latestQuestion, this.context.map((entry) => entry.text));
+    this.coach.narrativeProgress = progress;
     this.emit('context:coach', this.coach);
     return cloneCoach(this.coach);
   }
@@ -449,7 +465,10 @@ export class AssistantRuntime {
     this.emit('status', this.listening ? 'Слушаю в реальном времени' : 'Пауза');
 
     const settings = this.deps.getSettings();
-    if (turn.speaker === 'them') this.refreshInterviewContext();
+    const interviewState = this.deps.getInterviewContext();
+    if (turn.speaker === 'them') this.narrativeTracker.onInterviewerQuestion(interviewState, turn.text);
+    else this.narrativeTracker.onCandidateSpeech(interviewState, turn.text);
+    this.refreshInterviewContext(turn.speaker === 'them' ? turn.text : undefined);
     const isQuestionSource = source === 'system' || settings.captureSource === 'microphone';
     if (isQuestionSource && settings.autoAnswer) {
       try {
@@ -525,7 +544,9 @@ export class AssistantRuntime {
       }
 
       const conversation = this.context.map((entry) => entry.text);
-      const interviewPacket = buildInterviewContextPacket(this.deps.getInterviewContext(), question, conversation);
+      const interviewState = this.deps.getInterviewContext();
+      const interviewPacket = buildInterviewContextPacket(interviewState, question, conversation);
+      interviewPacket.coach.narrativeProgress = this.narrativeTracker.getProgress(interviewState);
       if (interviewPacket.coach.profileReady || interviewPacket.coach.vacancyReady) {
         this.coach = interviewPacket.coach;
         this.emit('context:coach', this.coach);
@@ -748,5 +769,12 @@ function cloneCoach(coach: InterviewCoachPayload): InterviewCoachPayload {
     vacancySignals: [...coach.vacancySignals],
     likelyQuestions: [...coach.likelyQuestions],
     alerts: [...coach.alerts],
+    narrativeProgress: coach.narrativeProgress
+      ? {
+          ...coach.narrativeProgress,
+          blocks: coach.narrativeProgress.blocks.map((block) => ({ ...block })),
+          coveredBlockIds: [...coach.narrativeProgress.coveredBlockIds],
+        }
+      : undefined,
   };
 }

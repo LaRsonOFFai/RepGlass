@@ -32,6 +32,7 @@ import type {
   InterviewContextImportRequest,
   InterviewContextState,
   LabeledAudioChunkPayload,
+  NarrativeNavigationRequest,
 } from './types';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -524,6 +525,9 @@ function registerIpc(): void {
     runtime.refreshInterviewContext();
     return next;
   });
+  ipcMain.handle('context:navigateNarrative', (_event, request: NarrativeNavigationRequest) =>
+    runtime.navigateNarrative(request),
+  );
   ipcMain.handle('context:import', async (_event, request: InterviewContextImportRequest) => {
     const kind = request?.kind === 'vacancy' || request?.kind === 'interview' ? request.kind : 'candidate';
     const options: OpenDialogOptions = {

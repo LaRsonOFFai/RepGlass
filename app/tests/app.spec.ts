@@ -99,7 +99,7 @@ test('saves a candidate profile and shows predictive context inside Ask', async 
   await page.getByRole('button', { name: 'Профиль', exact: true }).click();
   await page.getByPlaceholder('Например: Senior AQA').fill('Senior AQA');
   await page.getByPlaceholder(/Расскажите о себе в подготовленном формате/).fill(
-    'Я автоматизировал API и UI на TypeScript и Playwright. В GitLab CI сократил регресс с четырёх часов до сорока минут.',
+    'Коротко о себе\nЯ шесть лет автоматизирую API и UI.\n\nПоследний проект\nИспользовал TypeScript и Playwright.\n\nРезультат\nВ GitLab CI сократил регресс с четырёх часов до сорока минут.',
   );
   await page.getByPlaceholder('Название вакансии').fill('QA Automation Engineer');
   await page.getByPlaceholder('Вставьте описание вакансии целиком...').fill(
@@ -113,6 +113,12 @@ test('saves a candidate profile and shows predictive context inside Ask', async 
   if (!(await page.locator('.ask-panel').isVisible())) await page.getByRole('button', { name: 'Ask' }).click();
   await expect(page.locator('.context-coach')).toBeVisible();
   await expect(page.getByText('Профиль + Вакансия')).toBeVisible();
+  await expect(page.locator('.narrative-progress')).toBeVisible();
+  await expect(page.locator('.narrative-block')).toHaveCount(3);
+  await page.getByTitle('Следующий блок').click();
+  await expect(page.locator('.narrative-block.active')).toContainText('Последний проект');
+  await page.getByTitle('Закрепить текущий блок').click();
+  await expect(page.getByTitle('Включить автоматическое слежение')).toBeVisible();
   await expect(page.getByText('Вероятно спросят дальше')).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath('repglass-interview-context.png') });
 });

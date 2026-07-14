@@ -24,9 +24,12 @@ import {
   Minus,
   Monitor,
   Pause,
+  Pin,
+  PinOff,
   Play,
   Radio,
   RefreshCw,
+  RotateCcw,
   ScrollText,
   Send,
   Settings2,
@@ -53,6 +56,7 @@ import type {
   InterviewCoachPayload,
   InterviewContextDocumentKind,
   InterviewContextState,
+  NarrativeNavigationRequest,
   InterviewProfile,
   ReasoningEffort,
   ScreenCapturePayload,
@@ -360,6 +364,15 @@ export function App() {
       throw error;
     } finally {
       setContextBusy(false);
+    }
+  }, []);
+
+  const navigateNarrative = useCallback(async (request: NarrativeNavigationRequest) => {
+    try {
+      const next = await window.glass.context.navigateNarrative(request);
+      setCoach(next);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Не удалось переместиться по рассказу');
     }
   }, []);
 
@@ -700,6 +713,7 @@ export function App() {
                 coach={coach}
                 onClose={() => setAskOpen(false)}
                 onAskCoach={askFromCoach}
+                onNavigateNarrative={navigateNarrative}
                 onOpenSettings={() => {
                   setView('settings');
                   setSettingsTab('connection');
@@ -814,6 +828,7 @@ function AnswersView(props: {
   coach: InterviewCoachPayload | null;
   onClose: () => void;
   onAskCoach: (text: string) => void;
+  onNavigateNarrative: (request: NarrativeNavigationRequest) => void;
   onOpenSettings: () => void;
   onOpenProfile: () => void;
 }) {
@@ -882,7 +897,12 @@ function AnswersView(props: {
 
       <div className="feature-content ask-content">
         {coachOpen && props.coach && (
-          <ContextCoach coach={props.coach} onAsk={props.onAskCoach} onOpenProfile={props.onOpenProfile} />
+          <ContextCoach
+            coach={props.coach}
+            onAsk={props.onAskCoach}
+            onNavigateNarrative={props.onNavigateNarrative}
+            onOpenProfile={props.onOpenProfile}
+          />
         )}
         {activeRequest && <RequestContext request={activeRequest} />}
         {activeAnswer ? (
@@ -903,10 +923,11 @@ function AnswersView(props: {
 function ContextCoach(props: {
   coach: InterviewCoachPayload;
   onAsk: (question: string) => void;
+  onNavigateNarrative: (request: NarrativeNavigationRequest) => void;
   onOpenProfile: () => void;
 }) {
   const hasUsefulContext = Boolean(
-    props.coach.narrative || props.coach.relevantFacts.length || props.coach.vacancySignals.length,
+    props.coach.narrativeProgress || props.coach.narrative || props.coach.relevantFacts.length || props.coach.vacancySignals.length,
   );
   return (
     <section className={props.coach.showNarrative ? 'context-coach narrative-mode' : 'context-coach'}>
@@ -918,9 +939,16 @@ function ContextCoach(props: {
         <span>{props.coach.profileReady ? 'Профиль' : ''}{props.coach.profileReady && props.coach.vacancyReady ? ' + ' : ''}{props.coach.vacancyReady ? 'Вакансия' : ''}</span>
       </div>
 
-      {props.coach.narrative && <p className="coach-narrative">{props.coach.narrative}</p>}
+      {props.coach.narrativeProgress ? (
+        <NarrativeProgress
+          progress={props.coach.narrativeProgress}
+          onNavigate={props.onNavigateNarrative}
+        />
+      ) : props.coach.narrative ? (
+        <p className="coach-narrative">{props.coach.narrative}</p>
+      ) : null}
 
-      {!props.coach.narrative && props.coach.relevantFacts.length > 0 && (
+      {!props.coach.narrativeProgress && !props.coach.narrative && props.coach.relevantFacts.length > 0 && (
         <div className="coach-facts">
           {props.coach.relevantFacts.map((fact) => (
             <p key={fact.sourceId}><strong>{fact.label}</strong>{fact.excerpt}</p>
@@ -928,7 +956,7 @@ function ContextCoach(props: {
         </div>
       )}
 
-      {!props.coach.narrative && props.coach.vacancySignals.length > 0 && (
+      {!props.coach.narrativeProgress && !props.coach.narrative && props.coach.vacancySignals.length > 0 && (
         <div className="vacancy-signals">
           <span>Связь с вакансией</span>
           {props.coach.vacancySignals.slice(0, 2).map((signal) => <p key={signal}>{signal}</p>)}
@@ -951,6 +979,86 @@ function ContextCoach(props: {
       )}
       {props.coach.alerts.map((alert) => <p className="coach-alert" key={alert}>{alert}</p>)}
     </section>
+  );
+}
+
+function NarrativeProgress(props: {
+  progress: NonNullable<InterviewCoachPayload['narrativeProgress']>;
+  onNavigate: (request: NarrativeNavigationRequest) => void;
+}) {
+  const activeRef = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    activeRef.current?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  }, [props.progress.activeBlockId]);
+  const activeIndex = props.progress.blocks.findIndex((block) => block.id === props.progress.activeBlockId);
+  const resumeBlock = props.progress.blocks.find((block) => block.id === props.progress.resumeBlockId);
+
+  return (
+    <div className="narrative-progress">
+      <div className="narrative-status-row">
+        <div className="narrative-meter" title={`${props.progress.progressPercent}% рассказа озвучено`}>
+          <span style={{ width: `${props.progress.progressPercent}%` }} />
+        </div>
+        <output>{props.progress.progressPercent}%</output>
+        <div className="narrative-controls">
+          <button
+            className="icon-button small"
+            title="Предыдущий блок"
+            disabled={activeIndex <= 0}
+            onClick={() => props.onNavigate({ action: 'previous' })}
+          >
+            <ChevronLeft size={13} />
+          </button>
+          <button
+            className="icon-button small"
+            title="Следующий блок"
+            disabled={activeIndex < 0 || activeIndex >= props.progress.blocks.length - 1}
+            onClick={() => props.onNavigate({ action: 'next' })}
+          >
+            <ChevronRight size={13} />
+          </button>
+          <button
+            className={props.progress.pinnedBlockId ? 'icon-button small pinned' : 'icon-button small'}
+            title={props.progress.pinnedBlockId ? 'Включить автоматическое слежение' : 'Закрепить текущий блок'}
+            onClick={() => props.onNavigate({ action: props.progress.pinnedBlockId ? 'unpin' : 'pin' })}
+          >
+            {props.progress.pinnedBlockId ? <PinOff size={13} /> : <Pin size={13} />}
+          </button>
+          <button
+            className="icon-button small"
+            title="Сбросить прогресс рассказа"
+            onClick={() => props.onNavigate({ action: 'reset' })}
+          >
+            <RotateCcw size={13} />
+          </button>
+        </div>
+      </div>
+
+      {props.progress.mode === 'branching' && resumeBlock && (
+        <div className="narrative-branch">
+          <span>Уточнение</span>
+          <p>После ответа: {resumeBlock.title}</p>
+        </div>
+      )}
+
+      <div className="narrative-track">
+        {props.progress.blocks.map((block) => (
+          <button
+            ref={block.id === props.progress.activeBlockId ? activeRef : undefined}
+            className={`narrative-block ${block.status}`}
+            key={block.id}
+            title={block.status === 'covered' ? `Озвучено на ${block.coverage}%` : block.title}
+            onClick={() => props.onNavigate({ action: 'select', blockId: block.id })}
+          >
+            <span className="narrative-step">{block.status === 'covered' ? <Check size={11} /> : block.index + 1}</span>
+            <span className="narrative-block-copy">
+              <strong>{block.title}</strong>
+              <span>{block.text}</span>
+            </span>
+          </button>
+        ))}
+      </div>
+    </div>
   );
 }
 

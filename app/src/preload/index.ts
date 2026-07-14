@@ -12,6 +12,7 @@ import type {
   InterviewContextImportResult,
   InterviewContextState,
   LabeledAudioChunkPayload,
+  NarrativeNavigationRequest,
   ScreenCapturePayload,
   SessionInsightsPayload,
   SessionPhase,
@@ -52,6 +53,8 @@ const api = {
       ipcRenderer.invoke('context:import', request),
     removeDocument: (documentId: string): Promise<InterviewContextState> =>
       ipcRenderer.invoke('context:removeDocument', documentId),
+    navigateNarrative: (request: NarrativeNavigationRequest): Promise<InterviewCoachPayload | null> =>
+      ipcRenderer.invoke('context:navigateNarrative', request),
     clear: (): Promise<InterviewContextState> => ipcRenderer.invoke('context:clear'),
   },
   listen: {

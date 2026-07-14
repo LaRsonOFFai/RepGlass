@@ -169,6 +169,30 @@ describe('assistant session workflow', () => {
     expect(events).toContainEqual(expect.objectContaining({ channel: 'context:coach' }));
   });
 
+  it('moves the prepared story with candidate speech and interviewer follow-ups', async () => {
+    const { runtime } = createRuntime({
+      ...DEFAULT_INTERVIEW_CONTEXT,
+      candidateText: [
+        '## Коротко о себе\nЯ шесть лет занимаюсь автоматизацией тестирования.',
+        '## Последний проект\nНа проекте я отвечал за архитектуру API и UI автотестов.',
+        '## CI/CD\nЯ подключил Playwright тесты к GitLab CI и настроил параллельные пайплайны.',
+      ].join('\n\n'),
+    });
+    const internals = runtime as unknown as RuntimeInternals;
+
+    await internals.handleFinalTranscript('system', 'story-question', 'Расскажите немного о себе');
+    await internals.handleFinalTranscript('microphone', 'story-intro', 'Я шесть лет занимаюсь автоматизацией тестирования.');
+    const afterIntro = runtime.getSessionState().coach?.narrativeProgress;
+    expect(afterIntro?.progressPercent).toBe(33);
+    expect(afterIntro?.blocks.find((block) => block.id === afterIntro.activeBlockId)?.title).toBe('Последний проект');
+
+    await internals.handleFinalTranscript('system', 'story-branch', 'Как вы настраивали GitLab CI и пайплайны?');
+    const branch = runtime.getSessionState().coach?.narrativeProgress;
+    expect(branch?.mode).toBe('branching');
+    expect(branch?.blocks.find((block) => block.id === branch.activeBlockId)?.title).toBe('CI/CD');
+    expect(branch?.blocks.find((block) => block.id === branch.resumeBlockId)?.title).toBe('Последний проект');
+  });
+
   it('removes a speaker echo that reached the microphone before system transcription', async () => {
     const { runtime, events } = createRuntime();
     const internals = runtime as unknown as RuntimeInternals;

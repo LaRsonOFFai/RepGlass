@@ -53,6 +53,36 @@ export type InterviewContextReference = {
   excerpt: string;
 };
 
+export type NarrativeBlockStatus = 'covered' | 'active' | 'upcoming';
+export type NarrativeMode = 'ready' | 'narrating' | 'branching';
+export type NarrativeNavigationAction = 'previous' | 'next' | 'pin' | 'unpin' | 'reset' | 'select';
+
+export type NarrativeProgressBlock = {
+  id: string;
+  index: number;
+  title: string;
+  text: string;
+  status: NarrativeBlockStatus;
+  coverage: number;
+};
+
+export type NarrativeProgressPayload = {
+  mode: NarrativeMode;
+  blocks: NarrativeProgressBlock[];
+  coveredBlockIds: string[];
+  activeBlockId?: string;
+  nextBlockId?: string;
+  resumeBlockId?: string;
+  pinnedBlockId?: string;
+  branchQuestion?: string;
+  progressPercent: number;
+};
+
+export type NarrativeNavigationRequest = {
+  action: NarrativeNavigationAction;
+  blockId?: string;
+};
+
 export type InterviewCoachPayload = {
   topic: string;
   generatedAt: number;
@@ -60,6 +90,7 @@ export type InterviewCoachPayload = {
   vacancyReady: boolean;
   showNarrative: boolean;
   narrative?: string;
+  narrativeProgress?: NarrativeProgressPayload;
   relevantFacts: InterviewContextReference[];
   vacancySignals: string[];
   likelyQuestions: string[];

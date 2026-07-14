@@ -145,6 +145,7 @@ async function run() {
         hasSessionSummary: typeof window.glass.session.summarize === 'function',
         hasInterviewContext: typeof window.glass.context.get === 'function' && typeof window.glass.context.save === 'function',
         hasContextImport: typeof window.glass.context.importFile === 'function',
+        hasNarrativeNavigation: typeof window.glass.context.navigateNarrative === 'function',
         contextVersion: (await window.glass.context.get()).version,
         codexAvailable: codex.available,
         codexLoggedIn: codex.loggedIn,
@@ -168,6 +169,7 @@ async function run() {
       !result.hasSessionSummary ||
       !result.hasInterviewContext ||
       !result.hasContextImport ||
+      !result.hasNarrativeNavigation ||
       result.contextVersion !== 1
     ) {
       throw new Error(`Packaged renderer is incomplete: ${JSON.stringify(result)}`);
