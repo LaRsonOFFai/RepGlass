@@ -2,9 +2,11 @@ import { describe, expect, it, vi } from 'vitest';
 import { AssistantRuntime } from './assistantRuntime';
 import type { CodexService } from './codexService';
 import { DEFAULT_SETTINGS } from './defaults';
+import { DEFAULT_INTERVIEW_CONTEXT } from './interviewContext';
+import type { InterviewContextState } from './types';
 import { isLikelyTranscriptDuplicate } from './transcriptDedup';
 
-function createRuntime() {
+function createRuntime(interviewContext: InterviewContextState = DEFAULT_INTERVIEW_CONTEXT) {
   const events: Array<{ channel: string; payload: unknown }> = [];
   const answerQuestion = vi.fn().mockResolvedValue('Подготовленный ответ');
   const resetConversation = vi.fn();
@@ -20,6 +22,7 @@ function createRuntime() {
     codex,
     getApiKey: () => 'sk-test',
     getSettings: () => ({ ...DEFAULT_SETTINGS, answerProvider: 'codex', screenContext: 'off' }),
+    getInterviewContext: () => interviewContext,
     webContents: () =>
       ({
         isDestroyed: () => false,
@@ -86,7 +89,7 @@ describe('assistant session workflow', () => {
 
     runtime.clearSession();
 
-    expect(runtime.getSessionState()).toEqual({ phase: 'idle', transcript: [], answers: [], insights: null, summary: null });
+    expect(runtime.getSessionState()).toEqual({ phase: 'idle', transcript: [], answers: [], insights: null, summary: null, coach: null });
     expect(resetConversation).toHaveBeenCalledOnce();
   });
 
@@ -139,6 +142,31 @@ describe('assistant session workflow', () => {
     expect(conversation).toHaveLength(26);
     expect(conversation[0]).toBe('Вы: Моя реплика номер 1.');
     expect(conversation.at(-1)).toBe('Собеседник: Какие выводы можно сделать?');
+  });
+
+  it('grounds an answer in the candidate profile and target vacancy', async () => {
+    const { runtime, answerQuestion, events } = createRuntime({
+      ...DEFAULT_INTERVIEW_CONTEXT,
+      candidateTitle: 'Senior AQA',
+      candidateText: 'На последнем проекте я внедрил Playwright и сократил регресс с четырёх часов до сорока минут.',
+      vacancyTitle: 'QA Automation Engineer',
+      vacancyText: 'Нужен опыт Playwright, TypeScript и CI/CD.',
+    });
+
+    const answer = await runtime.ask({ question: 'Расскажите о вашем опыте с Playwright' });
+
+    expect(answerQuestion).toHaveBeenCalledWith(
+      expect.objectContaining({
+        interviewContext: expect.stringContaining('QA Automation Engineer'),
+      }),
+    );
+    expect(answer.request.contextReferences).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ kind: 'candidate' }),
+        expect.objectContaining({ kind: 'vacancy' }),
+      ]),
+    );
+    expect(events).toContainEqual(expect.objectContaining({ channel: 'context:coach' }));
   });
 
   it('removes a speaker echo that reached the microphone before system transcription', async () => {

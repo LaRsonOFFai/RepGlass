@@ -143,6 +143,9 @@ async function run() {
         hasSessionFinish: typeof window.glass.session.finish === 'function',
         hasLiveInsights: typeof window.glass.session.refreshInsights === 'function',
         hasSessionSummary: typeof window.glass.session.summarize === 'function',
+        hasInterviewContext: typeof window.glass.context.get === 'function' && typeof window.glass.context.save === 'function',
+        hasContextImport: typeof window.glass.context.importFile === 'function',
+        contextVersion: (await window.glass.context.get()).version,
         codexAvailable: codex.available,
         codexLoggedIn: codex.loggedIn,
         codexVersion: codex.version,
@@ -162,7 +165,10 @@ async function run() {
       !result.hasAskCommand ||
       !result.hasSessionFinish ||
       !result.hasLiveInsights ||
-      !result.hasSessionSummary
+      !result.hasSessionSummary ||
+      !result.hasInterviewContext ||
+      !result.hasContextImport ||
+      result.contextVersion !== 1
     ) {
       throw new Error(`Packaged renderer is incomplete: ${JSON.stringify(result)}`);
     }

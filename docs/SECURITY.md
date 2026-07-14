@@ -9,10 +9,12 @@
 - allowlist для внешних HTTPS URL;
 - один экземпляр приложения;
 - Windows DPAPI вместо plaintext/base64 для Platform API key;
+- Windows DPAPI для профиля кандидата, вакансии и извлечённого текста материалов;
 - Codex OAuth и refresh token принадлежат официальному Codex App Server;
 - bundled Codex запускается напрямую, без shell и PowerShell;
 - ephemeral Codex threads, read-only sandbox, network disabled для tools;
 - prompt-injection boundary для текста транскрипции и изображения;
+- материалы профиля помечаются как недоверенные справочные данные и не могут задавать модели инструкции;
 - screen captures удаляются в `finally`;
 - `contentProtection` включён по умолчанию и проверяется Playwright;
 - tray скрывается во время прослушивания и собственного screen capture;

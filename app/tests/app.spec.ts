@@ -51,7 +51,7 @@ test('opens transcript and every personalization section', async ({ browserName:
 
   await page.getByTitle('Настройки и авторизация').click();
   for (const section of ['Подключение', 'Профиль']) {
-    await page.getByRole('button', { name: section }).click();
+    await page.getByRole('button', { name: section, exact: true }).click();
   }
   await page.getByRole('button', { name: 'Аудио' }).click();
   await expect(page.getByRole('button', { name: 'Оба источника' })).toHaveClass(/active/);
@@ -92,6 +92,29 @@ test('captures a protected screen preview in the same window', async ({ browserN
   await expect(preview).toHaveAttribute('src', /^data:image\/png;base64,/);
   expect(electronApp.windows()).toHaveLength(1);
   await page.screenshot({ path: testInfo.outputPath('repglass-screen-context.png') });
+});
+
+test('saves a candidate profile and shows predictive context inside Ask', async ({ browserName: _browserName }, testInfo) => {
+  await page.getByTitle('Настройки и авторизация').click();
+  await page.getByRole('button', { name: 'Профиль', exact: true }).click();
+  await page.getByPlaceholder('Например: Senior AQA').fill('Senior AQA');
+  await page.getByPlaceholder(/Расскажите о себе в подготовленном формате/).fill(
+    'Я автоматизировал API и UI на TypeScript и Playwright. В GitLab CI сократил регресс с четырёх часов до сорока минут.',
+  );
+  await page.getByPlaceholder('Название вакансии').fill('QA Automation Engineer');
+  await page.getByPlaceholder('Вставьте описание вакансии целиком...').fill(
+    'Требуются TypeScript, Playwright, API и опыт развития CI/CD.',
+  );
+  await page.getByRole('button', { name: 'Сохранить', exact: true }).click();
+  await expect(page.getByText(/Сохранено/)).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath('repglass-profile-editor.png') });
+  await page.getByRole('button', { name: 'Вернуться' }).click();
+
+  if (!(await page.locator('.ask-panel').isVisible())) await page.getByRole('button', { name: 'Ask' }).click();
+  await expect(page.locator('.context-coach')).toBeVisible();
+  await expect(page.getByText('Профиль + Вакансия')).toBeVisible();
+  await expect(page.getByText('Вероятно спросят дальше')).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath('repglass-interview-context.png') });
 });
 
 test('keeps the screenshot attached to the answer that used it', async ({ browserName: _browserName }, testInfo) => {

@@ -2,7 +2,8 @@ import { app, safeStorage } from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
 import { migrateSettings, normalizeSettings, SETTINGS_SCHEMA_VERSION } from './defaults';
-import type { AppSettings, AuthState } from './types';
+import { DEFAULT_INTERVIEW_CONTEXT, normalizeInterviewContext } from './interviewContext';
+import type { AppSettings, AuthState, InterviewContextState } from './types';
 
 type CodexStatus = {
   loggedIn: boolean;
@@ -16,6 +17,8 @@ type CodexStatus = {
 type StoreShape = {
   encryptedOpenAIKey?: string;
   openAIKeyEncryption?: 'safeStorage-v1';
+  encryptedInterviewContext?: string;
+  interviewContextEncryption?: 'safeStorage-v1';
   settingsVersion?: number;
   settings?: Partial<AppSettings>;
 };
@@ -103,6 +106,42 @@ export class SecureStore {
       settingsVersion: Math.max(store.settingsVersion || 0, SETTINGS_SCHEMA_VERSION),
     });
     return next;
+  }
+
+  getInterviewContext(): InterviewContextState {
+    const store = this.read();
+    if (!store.encryptedInterviewContext) return { ...DEFAULT_INTERVIEW_CONTEXT, documents: [] };
+    try {
+      if (!safeStorage.isEncryptionAvailable()) return { ...DEFAULT_INTERVIEW_CONTEXT, documents: [] };
+      const serialized = safeStorage.decryptString(Buffer.from(store.encryptedInterviewContext, 'base64'));
+      return normalizeInterviewContext(JSON.parse(serialized) as Partial<InterviewContextState>);
+    } catch (error) {
+      console.error('[SecureStore] Failed to decrypt interview context:', error);
+      return { ...DEFAULT_INTERVIEW_CONTEXT, documents: [] };
+    }
+  }
+
+  saveInterviewContext(candidate: Partial<InterviewContextState>): InterviewContextState {
+    if (!safeStorage.isEncryptionAvailable()) {
+      throw new Error('Windows secure storage is unavailable; the interview profile was not saved');
+    }
+    const next = normalizeInterviewContext({ ...candidate, updatedAt: Date.now() });
+    const encrypted = safeStorage.encryptString(JSON.stringify(next)).toString('base64');
+    const store = this.read();
+    this.write({
+      ...store,
+      encryptedInterviewContext: encrypted,
+      interviewContextEncryption: 'safeStorage-v1',
+    });
+    return next;
+  }
+
+  clearInterviewContext(): InterviewContextState {
+    const store = this.read();
+    delete store.encryptedInterviewContext;
+    delete store.interviewContextEncryption;
+    this.write(store);
+    return { ...DEFAULT_INTERVIEW_CONTEXT, documents: [] };
   }
 
   private read(): StoreShape {

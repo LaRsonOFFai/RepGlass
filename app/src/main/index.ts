@@ -2,6 +2,7 @@ import {
   app,
   BrowserWindow,
   desktopCapturer,
+  dialog,
   globalShortcut,
   ipcMain,
   Menu,
@@ -11,17 +12,27 @@ import {
   session,
   shell,
   Tray,
+  type OpenDialogOptions,
 } from 'electron';
 import { electronApp, optimizer } from '@electron-toolkit/utils';
+import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { AssistantRuntime } from './assistantRuntime';
 import { CodexService } from './codexService';
+import { extractInterviewFile } from './interviewContextFiles';
 import { OpenAIService } from './openaiService';
 import { ScreenCaptureService } from './screenCaptureService';
 import { SecureStore } from './secureStore';
-import type { AppSettings, AskRequest, AudioInputSource, LabeledAudioChunkPayload } from './types';
+import type {
+  AppSettings,
+  AskRequest,
+  AudioInputSource,
+  InterviewContextImportRequest,
+  InterviewContextState,
+  LabeledAudioChunkPayload,
+} from './types';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const APP_NAME = 'RepGlass';
@@ -493,6 +504,71 @@ function registerIpc(): void {
     return settings;
   });
 
+  ipcMain.handle('context:get', () => store.getInterviewContext());
+  ipcMain.handle('context:save', (_event, candidate: Partial<InterviewContextState>) => {
+    const next = store.saveInterviewContext(candidate);
+    runtime.refreshInterviewContext();
+    return next;
+  });
+  ipcMain.handle('context:clear', () => {
+    const next = store.clearInterviewContext();
+    runtime.refreshInterviewContext();
+    return next;
+  });
+  ipcMain.handle('context:removeDocument', (_event, documentId: string) => {
+    const current = store.getInterviewContext();
+    const next = store.saveInterviewContext({
+      ...current,
+      documents: current.documents.filter((document) => document.id !== documentId),
+    });
+    runtime.refreshInterviewContext();
+    return next;
+  });
+  ipcMain.handle('context:import', async (_event, request: InterviewContextImportRequest) => {
+    const kind = request?.kind === 'vacancy' || request?.kind === 'interview' ? request.kind : 'candidate';
+    const options: OpenDialogOptions = {
+      title: kind === 'candidate' ? 'Добавить данные кандидата' : kind === 'vacancy' ? 'Добавить вакансию' : 'Добавить пример интервью',
+      properties: ['openFile'],
+      filters: [
+        {
+          name: 'Документы и записи',
+          extensions: ['txt', 'md', 'markdown', 'json', 'csv', 'pdf', 'docx', 'mp3', 'mp4', 'mpeg', 'mpga', 'm4a', 'wav', 'webm'],
+        },
+      ],
+    };
+    const result = mainWindow ? await dialog.showOpenDialog(mainWindow, options) : await dialog.showOpenDialog(options);
+    const current = store.getInterviewContext();
+    if (result.canceled || !result.filePaths[0]) return { canceled: true, state: current };
+
+    const extracted = await extractInterviewFile(result.filePaths[0]);
+    let content = extracted.content || '';
+    if (extracted.mediaPath) {
+      const apiKey = store.getOpenAIKey();
+      if (!apiKey) throw new Error('Для расшифровки аудио или видео нужен OpenAI API key');
+      mainWindow?.webContents.send('status', 'Расшифровываю запись интервью');
+      content = await openai.transcribeFile(apiKey, extracted.mediaPath, store.getSettings().language);
+    }
+
+    const documentId = crypto.randomUUID();
+    const next = store.saveInterviewContext({
+      ...current,
+      documents: [
+        ...current.documents,
+        {
+          id: documentId,
+          name: extracted.name,
+          kind,
+          sourceType: extracted.sourceType,
+          content,
+          createdAt: Date.now(),
+        },
+      ],
+    });
+    runtime.refreshInterviewContext();
+    mainWindow?.webContents.send('status', 'Материал добавлен в профиль интервью');
+    return { canceled: false, state: next, importedDocumentId: documentId };
+  });
+
   ipcMain.handle('listen:start', async () => {
     try {
       await runtime.start();
@@ -573,6 +649,7 @@ if (hasSingleInstanceLock) {
       codex,
       getApiKey: () => store.getOpenAIKey(),
       getSettings: () => store.getSettings(),
+      getInterviewContext: () => store.getInterviewContext(),
       webContents: () => mainWindow?.webContents ?? null,
       captureScreen: captureWithPrivacy,
     });

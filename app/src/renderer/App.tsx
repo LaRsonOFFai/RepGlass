@@ -1,6 +1,8 @@
 import {
   AudioLines,
   Bot,
+  BookOpen,
+  Briefcase,
   Bug,
   Check,
   ChevronLeft,
@@ -10,6 +12,7 @@ import {
   Copy,
   EyeOff,
   FileText,
+  FileUp,
   Gauge,
   Image as ImageIcon,
   KeyRound,
@@ -39,12 +42,17 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import type { CodexModel } from '../main/codexService';
 import { PROFILE_LABELS } from '../main/defaults';
+import { DEFAULT_INTERVIEW_CONTEXT } from '../main/interviewContext';
 import type {
   AnswerDetail,
   AnswerPayload,
   AssistantRequestPayload,
   AppSettings,
   AuthState,
+  InterviewAnswerStyle,
+  InterviewCoachPayload,
+  InterviewContextDocumentKind,
+  InterviewContextState,
   InterviewProfile,
   ReasoningEffort,
   ScreenCapturePayload,
@@ -98,11 +106,19 @@ export function App() {
   const [insightsLoading, setInsightsLoading] = useState(false);
   const [summary, setSummary] = useState<SessionSummaryPayload | null>(null);
   const [summaryLoading, setSummaryLoading] = useState(false);
+  const [interviewContext, setInterviewContext] = useState<InterviewContextState>(DEFAULT_INTERVIEW_CONTEXT);
+  const [contextBusy, setContextBusy] = useState(false);
+  const [coach, setCoach] = useState<InterviewCoachPayload | null>(null);
 
   useEffect(() => {
     const audioCapture = capture.current;
-    void Promise.all([window.glass.auth.getState(), window.glass.settings.get(), window.glass.session.getState()])
-      .then(([nextAuth, nextSettings, sessionState]) => {
+    void Promise.all([
+      window.glass.auth.getState(),
+      window.glass.settings.get(),
+      window.glass.session.getState(),
+      window.glass.context.get(),
+    ])
+      .then(([nextAuth, nextSettings, sessionState, nextInterviewContext]) => {
         setAuth(nextAuth);
         setSettings(nextSettings);
         setTranscript(sessionState.transcript);
@@ -110,6 +126,8 @@ export function App() {
         setPhase(sessionState.phase);
         setInsights(sessionState.insights);
         setSummary(sessionState.summary);
+        setCoach(sessionState.coach);
+        setInterviewContext(nextInterviewContext);
         const ready = nextSettings.answerProvider === 'codex' ? nextAuth.hasCodexAuth : nextAuth.hasApiKey;
         if (!ready) {
           setView('settings');
@@ -187,6 +205,7 @@ export function App() {
       setScreenPreview(null);
       setInsights(null);
       setSummary(null);
+      setCoach(null);
     });
     const offSummary = window.glass.events.onSummary((payload) => {
       setSummary(payload);
@@ -194,6 +213,7 @@ export function App() {
     const offSummaryState = window.glass.events.onSummaryState((payload) => setSummaryLoading(payload.loading));
     const offInsights = window.glass.events.onInsights(setInsights);
     const offInsightsState = window.glass.events.onInsightsState((payload) => setInsightsLoading(payload.loading));
+    const offCoach = window.glass.events.onCoach(setCoach);
 
     return () => {
       offStatus();
@@ -217,6 +237,7 @@ export function App() {
       offSummaryState();
       offInsights();
       offInsightsState();
+      offCoach();
       audioCapture.stop();
     };
   }, []);
@@ -272,6 +293,74 @@ export function App() {
   const stopListening = useCallback(async () => {
     capture.current.stop();
     await window.glass.listen.stop();
+  }, []);
+
+  const saveInterviewContext = useCallback(async (candidate: Partial<InterviewContextState>) => {
+    setContextBusy(true);
+    setErrorMessage('');
+    try {
+      const next = await window.glass.context.save(candidate);
+      setInterviewContext(next);
+      setStatus('Профиль интервью сохранён');
+      return next;
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Не удалось сохранить профиль интервью');
+      throw error;
+    } finally {
+      setContextBusy(false);
+    }
+  }, []);
+
+  const importInterviewFile = useCallback(async (
+    kind: InterviewContextDocumentKind,
+    draft: InterviewContextState,
+  ) => {
+    setContextBusy(true);
+    setErrorMessage('');
+    try {
+      const saved = await window.glass.context.save(draft);
+      setInterviewContext(saved);
+      const result = await window.glass.context.importFile({ kind });
+      setInterviewContext(result.state);
+      return result.state;
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Не удалось импортировать материал');
+      throw error;
+    } finally {
+      setContextBusy(false);
+    }
+  }, []);
+
+  const removeInterviewDocument = useCallback(async (documentId: string, draft: InterviewContextState) => {
+    setContextBusy(true);
+    setErrorMessage('');
+    try {
+      await window.glass.context.save(draft);
+      const next = await window.glass.context.removeDocument(documentId);
+      setInterviewContext(next);
+      return next;
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Не удалось удалить материал');
+      throw error;
+    } finally {
+      setContextBusy(false);
+    }
+  }, []);
+
+  const clearInterviewContext = useCallback(async () => {
+    setContextBusy(true);
+    setErrorMessage('');
+    try {
+      const next = await window.glass.context.clear();
+      setInterviewContext(next);
+      setStatus('Профиль интервью очищен');
+      return next;
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Не удалось очистить профиль интервью');
+      throw error;
+    } finally {
+      setContextBusy(false);
+    }
   }, []);
 
   toggleListenRef.current = () => void (listening ? stopListening() : startListening());
@@ -370,6 +459,20 @@ export function App() {
         await window.glass.ask.send({ question: text.trim(), trigger: 'insight' });
       } catch (error) {
         setErrorMessage(error instanceof Error ? error.message : 'Не удалось открыть вывод в Ask');
+      }
+    },
+    [loadingAnswer],
+  );
+
+  const askFromCoach = useCallback(
+    async (text: string) => {
+      if (!text.trim() || loadingAnswer) return;
+      setView('workspace');
+      setAskOpen(true);
+      try {
+        await window.glass.ask.send({ question: text.trim(), trigger: 'coach' });
+      } catch (error) {
+        setErrorMessage(error instanceof Error ? error.message : 'Не удалось подготовить ответ из профиля');
       }
     },
     [loadingAnswer],
@@ -507,6 +610,16 @@ export function App() {
         <button className="icon-button" title="Начать новую сессию" onClick={clearSession} disabled={!hasConversation}>
           <Trash2 size={14} />
         </button>
+        <button
+          className="icon-button"
+          title="Профиль кандидата и вакансия"
+          onClick={() => {
+            setView('settings');
+            setSettingsTab('profile');
+          }}
+        >
+          <Briefcase size={14} />
+        </button>
         <button className="icon-button" title="Настройки и авторизация" onClick={() => setView('settings')}>
           <Settings2 size={15} />
         </button>
@@ -538,6 +651,8 @@ export function App() {
               apiBusy={apiBusy}
               codexBusy={codexBusy}
               listening={listening}
+              interviewContext={interviewContext}
+              contextBusy={contextBusy}
               onApiKeyChange={setApiKey}
               onSaveApiKey={saveApiKey}
               onClearApiKey={clearApiKey}
@@ -546,6 +661,10 @@ export function App() {
               onRefreshAuth={refreshAuth}
               onOpenApiKeys={() => window.glass.window.openExternal(API_KEYS_URL)}
               onUpdateSettings={updateSettings}
+              onSaveInterviewContext={saveInterviewContext}
+              onImportInterviewFile={importInterviewFile}
+              onRemoveInterviewDocument={removeInterviewDocument}
+              onClearInterviewContext={clearInterviewContext}
             />
           </div>
         </section>
@@ -578,10 +697,16 @@ export function App() {
                 listening={listening}
                 status={status}
                 authReady={answerAuthReady}
+                coach={coach}
                 onClose={() => setAskOpen(false)}
+                onAskCoach={askFromCoach}
                 onOpenSettings={() => {
                   setView('settings');
                   setSettingsTab('connection');
+                }}
+                onOpenProfile={() => {
+                  setView('settings');
+                  setSettingsTab('profile');
                 }}
               />
               <Composer
@@ -686,8 +811,11 @@ function AnswersView(props: {
   listening: boolean;
   status: string;
   authReady: boolean;
+  coach: InterviewCoachPayload | null;
   onClose: () => void;
+  onAskCoach: (text: string) => void;
   onOpenSettings: () => void;
+  onOpenProfile: () => void;
 }) {
   const visibleAnswers = useMemo(
     () =>
@@ -698,8 +826,12 @@ function AnswersView(props: {
   );
   const [answerIndex, setAnswerIndex] = useState(0);
   const [copied, setCopied] = useState(false);
+  const [coachOpen, setCoachOpen] = useState(true);
   const newestId = visibleAnswers[0]?.id;
   useEffect(() => setAnswerIndex(0), [newestId]);
+  useEffect(() => {
+    if (props.coach?.showNarrative) setCoachOpen(true);
+  }, [props.coach?.generatedAt, props.coach?.showNarrative]);
   const selectedAnswer = visibleAnswers[Math.min(answerIndex, Math.max(0, visibleAnswers.length - 1))] || null;
   const showingPendingRequest = Boolean(props.loading && props.request && props.request.id !== selectedAnswer?.id);
   const activeAnswer = showingPendingRequest ? null : selectedAnswer;
@@ -717,6 +849,13 @@ function AnswersView(props: {
           </div>
         </div>
         <div className="ask-controls">
+          <button
+            className={coachOpen && props.coach ? 'icon-button context-active' : 'icon-button'}
+            title={props.coach ? 'Показать контекст кандидата' : 'Настроить профиль кандидата'}
+            onClick={() => (props.coach ? setCoachOpen((current) => !current) : props.onOpenProfile())}
+          >
+            <Briefcase size={14} />
+          </button>
           <button className="icon-button" title="Предыдущий ответ" disabled={answerIndex >= visibleAnswers.length - 1} onClick={() => setAnswerIndex((index) => Math.min(visibleAnswers.length - 1, index + 1))}>
             <ChevronLeft size={14} />
           </button>
@@ -742,6 +881,9 @@ function AnswersView(props: {
       </div>
 
       <div className="feature-content ask-content">
+        {coachOpen && props.coach && (
+          <ContextCoach coach={props.coach} onAsk={props.onAskCoach} onOpenProfile={props.onOpenProfile} />
+        )}
         {activeRequest && <RequestContext request={activeRequest} />}
         {activeAnswer ? (
           <AnswerCard answer={activeAnswer} streaming={isStreaming} />
@@ -758,6 +900,60 @@ function AnswersView(props: {
   );
 }
 
+function ContextCoach(props: {
+  coach: InterviewCoachPayload;
+  onAsk: (question: string) => void;
+  onOpenProfile: () => void;
+}) {
+  const hasUsefulContext = Boolean(
+    props.coach.narrative || props.coach.relevantFacts.length || props.coach.vacancySignals.length,
+  );
+  return (
+    <section className={props.coach.showNarrative ? 'context-coach narrative-mode' : 'context-coach'}>
+      <div className="coach-heading">
+        <div>
+          <BookOpen size={14} />
+          <strong>{props.coach.showNarrative ? 'Подготовленный рассказ' : props.coach.topic}</strong>
+        </div>
+        <span>{props.coach.profileReady ? 'Профиль' : ''}{props.coach.profileReady && props.coach.vacancyReady ? ' + ' : ''}{props.coach.vacancyReady ? 'Вакансия' : ''}</span>
+      </div>
+
+      {props.coach.narrative && <p className="coach-narrative">{props.coach.narrative}</p>}
+
+      {!props.coach.narrative && props.coach.relevantFacts.length > 0 && (
+        <div className="coach-facts">
+          {props.coach.relevantFacts.map((fact) => (
+            <p key={fact.sourceId}><strong>{fact.label}</strong>{fact.excerpt}</p>
+          ))}
+        </div>
+      )}
+
+      {!props.coach.narrative && props.coach.vacancySignals.length > 0 && (
+        <div className="vacancy-signals">
+          <span>Связь с вакансией</span>
+          {props.coach.vacancySignals.slice(0, 2).map((signal) => <p key={signal}>{signal}</p>)}
+        </div>
+      )}
+
+      {props.coach.likelyQuestions.length > 0 && (
+        <div className="likely-questions">
+          <span>Вероятно спросят дальше</span>
+          <div>
+            {props.coach.likelyQuestions.slice(0, 3).map((question) => (
+              <button key={question} title="Подготовить ответ" onClick={() => props.onAsk(question)}>{question}</button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {!hasUsefulContext && (
+        <button className="text-command coach-setup" onClick={props.onOpenProfile}>Заполнить профиль и вакансию</button>
+      )}
+      {props.coach.alerts.map((alert) => <p className="coach-alert" key={alert}>{alert}</p>)}
+    </section>
+  );
+}
+
 function RequestContext(props: { request: AssistantRequestPayload }) {
   return (
     <div className="request-context">
@@ -765,6 +961,15 @@ function RequestContext(props: { request: AssistantRequestPayload }) {
         <div className="source-chips">
           {props.request.sources.map((source) => (
             <span className={`source-chip source-${source}`} key={source}>{requestSourceLabel(source)}</span>
+          ))}
+          {props.request.contextReferences?.map((reference) => (
+            <span
+              className={`source-chip source-context source-context-${reference.kind}`}
+              key={reference.sourceId}
+              title={reference.excerpt}
+            >
+              {contextKindLabel(reference.kind)}
+            </span>
           ))}
         </div>
         <span className="request-time">{new Date(props.request.createdAt).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}</span>
@@ -993,6 +1198,8 @@ function SettingsView(props: {
   apiBusy: boolean;
   codexBusy: boolean;
   listening: boolean;
+  interviewContext: InterviewContextState;
+  contextBusy: boolean;
   onApiKeyChange: (value: string) => void;
   onSaveApiKey: () => void;
   onClearApiKey: () => void;
@@ -1001,6 +1208,13 @@ function SettingsView(props: {
   onRefreshAuth: () => void;
   onOpenApiKeys: () => void;
   onUpdateSettings: (patch: Partial<AppSettings>) => Promise<AppSettings>;
+  onSaveInterviewContext: (candidate: Partial<InterviewContextState>) => Promise<InterviewContextState>;
+  onImportInterviewFile: (
+    kind: InterviewContextDocumentKind,
+    draft: InterviewContextState,
+  ) => Promise<InterviewContextState>;
+  onRemoveInterviewDocument: (documentId: string, draft: InterviewContextState) => Promise<InterviewContextState>;
+  onClearInterviewContext: () => Promise<InterviewContextState>;
 }) {
   return (
     <div className="settings-page">
@@ -1115,6 +1329,15 @@ function SettingsView(props: {
 
       {props.tab === 'profile' && (
         <div className="settings-scroll">
+          <InterviewContextEditor
+            value={props.interviewContext}
+            busy={props.contextBusy}
+            onSave={props.onSaveInterviewContext}
+            onImport={props.onImportInterviewFile}
+            onRemoveDocument={props.onRemoveInterviewDocument}
+            onClear={props.onClearInterviewContext}
+          />
+
           <SettingsSection title="Специализация" description="Профиль меняет структуру и акценты ответа.">
             <div className="profile-grid">
               {(['developer', 'aqa', 'manual-qa', 'load-qa', 'general', 'custom'] as InterviewProfile[]).map((profile) => (
@@ -1286,6 +1509,164 @@ function SettingsView(props: {
   );
 }
 
+function InterviewContextEditor(props: {
+  value: InterviewContextState;
+  busy: boolean;
+  onSave: (candidate: Partial<InterviewContextState>) => Promise<InterviewContextState>;
+  onImport: (kind: InterviewContextDocumentKind, draft: InterviewContextState) => Promise<InterviewContextState>;
+  onRemoveDocument: (documentId: string, draft: InterviewContextState) => Promise<InterviewContextState>;
+  onClear: () => Promise<InterviewContextState>;
+}) {
+  const [draft, setDraft] = useState(props.value);
+  useEffect(() => setDraft(props.value), [props.value]);
+  const dirty = useMemo(
+    () => interviewContextSignature(draft) !== interviewContextSignature(props.value),
+    [draft, props.value],
+  );
+  const update = (patch: Partial<InterviewContextState>) => setDraft((current) => ({ ...current, ...patch }));
+  const importFile = (kind: InterviewContextDocumentKind) => {
+    void props.onImport(kind, draft).then(setDraft).catch(() => undefined);
+  };
+
+  return (
+    <>
+      <SettingsSection
+        title="Профиль интервью"
+        description="Локальная база фактов связывает ваш опыт, вакансию и текущий разговор."
+      >
+        <ToggleRow
+          checked={draft.enabled}
+          title="Учитывать профиль в ответах"
+          description="В модель отправляются только фрагменты, связанные с текущим вопросом."
+          onChange={(enabled) => update({ enabled })}
+        />
+        <ToggleRow
+          checked={draft.predictiveAssist}
+          title="Предсказывать следующие вопросы"
+          description="Карточка справа обновляется локально после реплик собеседника."
+          onChange={(predictiveAssist) => update({ predictiveAssist })}
+        />
+        <ToggleRow
+          checked={draft.strictFacts}
+          title="Не придумывать личный опыт"
+          description="Если подтверждённого факта нет, помощник предложит честную нейтральную формулировку."
+          onChange={(strictFacts) => update({ strictFacts })}
+        />
+        <label className="field-label">
+          <span>Стиль подготовленного ответа</span>
+          <Segmented
+            value={draft.answerStyle}
+            options={[
+              { value: 'natural', label: 'Естественно' },
+              { value: 'concise', label: 'Кратко' },
+              { value: 'star', label: 'STAR' },
+              { value: 'technical', label: 'Технически' },
+            ]}
+            onChange={(answerStyle) => update({ answerStyle: answerStyle as InterviewAnswerStyle })}
+          />
+        </label>
+      </SettingsSection>
+
+      <SettingsSection title="О вас" description="Подготовленный рассказ, реальные проекты, роль, действия и результаты.">
+        <div className="context-title-row">
+          <input
+            value={draft.candidateTitle}
+            placeholder="Например: Senior AQA"
+            onChange={(event) => update({ candidateTitle: event.target.value })}
+          />
+          <button className="secondary-button" onClick={() => importFile('candidate')} disabled={props.busy}>
+            <FileUp size={14} />
+            <span>Файл</span>
+          </button>
+        </div>
+        <textarea
+          className="context-textarea candidate-context-input"
+          value={draft.candidateText}
+          placeholder="Расскажите о себе в подготовленном формате: опыт, проекты, обязанности, сложные ситуации и измеримые результаты..."
+          onChange={(event) => update({ candidateText: event.target.value })}
+        />
+      </SettingsSection>
+
+      <SettingsSection title="Вакансия" description="Требования роли, обязанности, компания и важные акценты.">
+        <div className="context-title-row">
+          <input
+            value={draft.vacancyTitle}
+            placeholder="Название вакансии"
+            onChange={(event) => update({ vacancyTitle: event.target.value })}
+          />
+          <button className="secondary-button" onClick={() => importFile('vacancy')} disabled={props.busy}>
+            <FileUp size={14} />
+            <span>Файл</span>
+          </button>
+        </div>
+        <textarea
+          className="context-textarea"
+          value={draft.vacancyText}
+          placeholder="Вставьте описание вакансии целиком..."
+          onChange={(event) => update({ vacancyText: event.target.value })}
+        />
+      </SettingsSection>
+
+      <SettingsSection
+        title="Материалы"
+        description="PDF, DOCX, текст, а также аудио или видео прошлых интервью. Записи расшифровываются через OpenAI API."
+      >
+        <div className="material-actions">
+          <button className="secondary-button" onClick={() => importFile('interview')} disabled={props.busy}>
+            <FileUp size={14} />
+            <span>Добавить интервью</span>
+          </button>
+          <span>{draft.documents.length ? `${draft.documents.length} материалов` : 'Материалов пока нет'}</span>
+        </div>
+        {draft.documents.length > 0 && (
+          <div className="material-list">
+            {draft.documents.map((document) => (
+              <div className="material-row" key={document.id}>
+                <span className={`material-kind material-${document.kind}`}><FileText size={13} /></span>
+                <div>
+                  <strong>{document.name}</strong>
+                  <span>{contextKindLabel(document.kind)} · {sourceTypeLabel(document.sourceType)} · {formatCharacters(document.content.length)}</span>
+                </div>
+                <button
+                  className="icon-button small"
+                  title="Удалить материал"
+                  disabled={props.busy}
+                  onClick={() => void props.onRemoveDocument(document.id, draft).then(setDraft).catch(() => undefined)}
+                >
+                  <Trash2 size={13} />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+      </SettingsSection>
+
+      <div className="context-save-bar">
+        <span>{props.value.updatedAt ? `Сохранено ${new Date(props.value.updatedAt).toLocaleString('ru-RU')}` : 'Данные ещё не сохранены'}</span>
+        <button
+          className="secondary-button danger-button"
+          disabled={props.busy || !hasInterviewContextContent(draft)}
+          onClick={() => {
+            if (!window.confirm('Очистить профиль, вакансию и все загруженные материалы?')) return;
+            void props.onClear().then(setDraft).catch(() => undefined);
+          }}
+        >
+          <Trash2 size={14} />
+          <span>Очистить</span>
+        </button>
+        <button
+          className="primary-button"
+          disabled={props.busy || !dirty}
+          onClick={() => void props.onSave(draft).then(setDraft).catch(() => undefined)}
+        >
+          {props.busy ? <RefreshCw className="spin" size={14} /> : <Check size={14} />}
+          <span>Сохранить</span>
+        </button>
+      </div>
+    </>
+  );
+}
+
 function SettingsTabButton(props: { active: boolean; icon: ReactNode; label: string; onClick: () => void }) {
   return (
     <button className={props.active ? 'settings-tab active' : 'settings-tab'} onClick={props.onClick}>
@@ -1366,7 +1747,42 @@ function requestTriggerLabel(trigger: AssistantRequestPayload['trigger']): strin
   if (trigger === 'auto') return 'Вопрос собеседника';
   if (trigger === 'hotkey') return 'Умный запрос Ctrl+Enter';
   if (trigger === 'insight') return 'Запрос из живых выводов';
+  if (trigger === 'coach') return 'Подготовка по профилю';
   return 'Ручной вопрос';
+}
+
+function contextKindLabel(kind: InterviewContextDocumentKind): string {
+  if (kind === 'candidate') return 'Профиль';
+  if (kind === 'vacancy') return 'Вакансия';
+  return 'Интервью';
+}
+
+function sourceTypeLabel(sourceType: InterviewContextState['documents'][number]['sourceType']): string {
+  if (sourceType === 'media') return 'расшифровка';
+  if (sourceType === 'document') return 'документ';
+  return 'текст';
+}
+
+function formatCharacters(length: number): string {
+  return length >= 1_000 ? `${(length / 1_000).toFixed(1)} тыс. знаков` : `${length} знаков`;
+}
+
+function hasInterviewContextContent(context: InterviewContextState): boolean {
+  return Boolean(context.candidateText.trim() || context.vacancyText.trim() || context.documents.length);
+}
+
+function interviewContextSignature(context: InterviewContextState): string {
+  return JSON.stringify({
+    enabled: context.enabled,
+    predictiveAssist: context.predictiveAssist,
+    strictFacts: context.strictFacts,
+    answerStyle: context.answerStyle,
+    candidateTitle: context.candidateTitle,
+    candidateText: context.candidateText,
+    vacancyTitle: context.vacancyTitle,
+    vacancyText: context.vacancyText,
+    documents: context.documents,
+  });
 }
 
 function reactNodeText(node: ReactNode): string {

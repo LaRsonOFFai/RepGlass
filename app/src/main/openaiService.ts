@@ -31,12 +31,14 @@ export class OpenAIService {
     question: string;
     conversation: string[];
     settings: AppSettings;
+    interviewContext?: string;
     imagePath?: string;
     onDelta?: (text: string) => void;
   }): Promise<string> {
     const client = new OpenAI({ apiKey: params.apiKey });
     const context = params.conversation.join('\n');
     const userText = [
+      params.interviewContext || '',
       'Недавняя транскрипция:',
       context || 'Транскрипции пока нет.',
       '',
@@ -79,6 +81,18 @@ export class OpenAIService {
       params.onDelta?.(answer);
       return answer;
     }
+  }
+
+  async transcribeFile(apiKey: string, filePath: string, language?: string): Promise<string> {
+    const client = new OpenAI({ apiKey });
+    const result = await client.audio.transcriptions.create({
+      file: fs.createReadStream(filePath),
+      model: 'gpt-4o-mini-transcribe',
+      ...(language && language !== 'auto' ? { language } : {}),
+    });
+    const text = result.text.trim();
+    if (!text) throw new Error('OpenAI не вернул текст расшифровки');
+    return text;
   }
 
   private imageDataUrl(imagePath: string): string {

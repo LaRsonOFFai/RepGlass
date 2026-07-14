@@ -6,12 +6,15 @@ import { classifyQuestion, shouldAttachScreen, shouldAutoAnswer, signatureFor } 
 import { RealtimeTranscriptionService } from './realtimeTranscriptionService';
 import type { CapturedScreen } from './screenCaptureService';
 import { isLikelyTranscriptDuplicate } from './transcriptDedup';
+import { buildInterviewCoach, buildInterviewContextPacket, hasInterviewContext } from './interviewContext';
 import type {
   AnswerPayload,
   AppSettings,
   AskRequest,
   AssistantRequestPayload,
   AudioInputSource,
+  InterviewCoachPayload,
+  InterviewContextState,
   LabeledAudioChunkPayload,
   RequestSource,
   RequestTrigger,
@@ -26,6 +29,7 @@ type RuntimeDeps = {
   codex: CodexService;
   getApiKey: () => string | null;
   getSettings: () => AppSettings;
+  getInterviewContext: () => InterviewContextState;
   webContents: () => WebContents | null;
   captureScreen: () => Promise<CapturedScreen>;
 };
@@ -67,6 +71,7 @@ export class AssistantRuntime {
   private phase: SessionPhase = 'idle';
   private insights: SessionInsightsPayload | null = null;
   private summary: SessionSummaryPayload | null = null;
+  private coach: InterviewCoachPayload | null = null;
   private insightsTask: Promise<SessionInsightsPayload> | null = null;
   private insightsTimer: NodeJS.Timeout | null = null;
   private summaryTask: Promise<SessionSummaryPayload> | null = null;
@@ -153,6 +158,7 @@ export class AssistantRuntime {
       answers: this.answers.map((answer) => cloneAnswer(answer)).reverse(),
       insights: this.insights ? { ...this.insights } : null,
       summary: this.summary ? { ...this.summary } : null,
+      coach: this.coach ? cloneCoach(this.coach) : null,
     };
   }
 
@@ -229,6 +235,7 @@ export class AssistantRuntime {
     this.transcriptCount = 0;
     this.insights = null;
     this.summary = null;
+    this.coach = null;
     this.sessionGeneration += 1;
     this.codex.resetConversation();
     this.lastSignature = '';
@@ -240,6 +247,7 @@ export class AssistantRuntime {
     this.insightsTimer = null;
     this.setPhase(this.listening ? 'listening' : 'idle');
     this.emit('session:cleared', {});
+    this.refreshInterviewContext();
     this.emit('status', this.listening ? 'Слушаю' : 'Готово');
   }
 
@@ -272,6 +280,19 @@ export class AssistantRuntime {
     } finally {
       if (this.insightsTask === task) this.insightsTask = null;
     }
+  }
+
+  refreshInterviewContext(): InterviewCoachPayload | null {
+    const state = this.deps.getInterviewContext();
+    if (!state.enabled || !state.predictiveAssist || !hasInterviewContext(state)) {
+      this.coach = null;
+      this.emit('context:coach', null);
+      return null;
+    }
+    const latestQuestion = [...this.transcript].reverse().find((turn) => turn.speaker === 'them')?.text || '';
+    this.coach = buildInterviewCoach(state, latestQuestion, this.context.map((entry) => entry.text));
+    this.emit('context:coach', this.coach);
+    return cloneCoach(this.coach);
   }
 
   private stopRealtime(): void {
@@ -428,6 +449,7 @@ export class AssistantRuntime {
     this.emit('status', this.listening ? 'Слушаю в реальном времени' : 'Пауза');
 
     const settings = this.deps.getSettings();
+    if (turn.speaker === 'them') this.refreshInterviewContext();
     const isQuestionSource = source === 'system' || settings.captureSource === 'microphone';
     if (isQuestionSource && settings.autoAnswer) {
       try {
@@ -502,6 +524,12 @@ export class AssistantRuntime {
         }
       }
 
+      const conversation = this.context.map((entry) => entry.text);
+      const interviewPacket = buildInterviewContextPacket(this.deps.getInterviewContext(), question, conversation);
+      if (interviewPacket.coach.profileReady || interviewPacket.coach.vacancyReady) {
+        this.coach = interviewPacket.coach;
+        this.emit('context:coach', this.coach);
+      }
       const request: AssistantRequestPayload = {
         id,
         question,
@@ -511,11 +539,11 @@ export class AssistantRuntime {
         speaker: options.speaker,
         transcriptTurnIds: options.transcriptTurnIds,
         screen: capture ? { dataUrl: capture.dataUrl, displayName: capture.displayName } : undefined,
+        contextReferences: interviewPacket.references,
       };
       this.emit('ask:request', request);
 
       const category = classifyQuestion(question, Boolean(capture));
-      const conversation = this.context.map((entry) => entry.text);
       const onDelta = (text: string) =>
         this.emit('ask:delta', { id, request, question, answer: text, category, usedScreen: Boolean(capture) });
       const answer =
@@ -524,6 +552,7 @@ export class AssistantRuntime {
               question,
               conversation,
               settings,
+              interviewContext: interviewPacket.prompt,
               imagePath: capture?.path,
               onDelta,
             })
@@ -532,6 +561,7 @@ export class AssistantRuntime {
               question,
               conversation,
               settings,
+              interviewContext: interviewPacket.prompt,
               imagePath: capture?.path,
               onDelta,
             });
@@ -576,6 +606,7 @@ export class AssistantRuntime {
       'Не оценивай кандидата и не выдумывай факты. Не более 8 коротких пунктов.',
     ].join(' ');
     const conversation = this.context.map((entry) => entry.text);
+    const interviewContext = buildInterviewContextPacket(this.deps.getInterviewContext(), question, conversation).prompt;
     const emitPartial = (text: string) => {
       if (generation !== this.sessionGeneration) return;
       this.emit('session:insights', {
@@ -588,7 +619,7 @@ export class AssistantRuntime {
 
     this.emit('session:insights-state', { loading: true });
     try {
-      const text = await this.runModel(question, conversation, settings, emitPartial);
+      const text = await this.runModel(question, conversation, settings, emitPartial, interviewContext);
       const insights: SessionInsightsPayload = {
         text,
         createdAt: Date.now(),
@@ -613,6 +644,7 @@ export class AssistantRuntime {
       'Используй весь контекст сессии, не выдумывай факты и явно отмечай отсутствие данных.',
     ].join(' ');
     const conversation = this.context.map((entry) => entry.text);
+    const interviewContext = buildInterviewContextPacket(this.deps.getInterviewContext(), question, conversation).prompt;
     const emitPartial = (text: string) => {
       if (generation !== this.sessionGeneration) return;
       this.emit('session:summary', {
@@ -626,7 +658,7 @@ export class AssistantRuntime {
 
     if (generation === this.sessionGeneration) this.emit('session:summary-state', { loading: true });
     try {
-      const text = await this.runModel(question, conversation, settings, emitPartial);
+      const text = await this.runModel(question, conversation, settings, emitPartial, interviewContext);
       const summary: SessionSummaryPayload = {
         text,
         createdAt: Date.now(),
@@ -651,15 +683,17 @@ export class AssistantRuntime {
     conversation: string[],
     settings: AppSettings,
     onDelta: (text: string) => void,
+    interviewContext = '',
   ): Promise<string> {
     return settings.answerProvider === 'codex'
-      ? await this.codex.answerQuestion({ question, conversation, settings, onDelta })
+      ? await this.codex.answerQuestion({ question, conversation, settings, onDelta, interviewContext })
       : await this.openai.answerQuestion({
           apiKey: this.requireApiKey(),
           question,
           conversation,
           settings,
           onDelta,
+          interviewContext,
         });
   }
 
@@ -702,6 +736,17 @@ function cloneAnswer(answer: AnswerPayload): AnswerPayload {
       sources: [...answer.request.sources],
       transcriptTurnIds: answer.request.transcriptTurnIds ? [...answer.request.transcriptTurnIds] : undefined,
       screen: answer.request.screen ? { ...answer.request.screen } : undefined,
+      contextReferences: answer.request.contextReferences?.map((reference) => ({ ...reference })),
     },
+  };
+}
+
+function cloneCoach(coach: InterviewCoachPayload): InterviewCoachPayload {
+  return {
+    ...coach,
+    relevantFacts: coach.relevantFacts.map((reference) => ({ ...reference })),
+    vacancySignals: [...coach.vacancySignals],
+    likelyQuestions: [...coach.likelyQuestions],
+    alerts: [...coach.alerts],
   };
 }

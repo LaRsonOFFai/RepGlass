@@ -7,6 +7,10 @@ import type {
   AskRequest,
   AuthState,
   AudioInputSource,
+  InterviewCoachPayload,
+  InterviewContextImportRequest,
+  InterviewContextImportResult,
+  InterviewContextState,
   LabeledAudioChunkPayload,
   ScreenCapturePayload,
   SessionInsightsPayload,
@@ -39,6 +43,16 @@ const api = {
   settings: {
     get: (): Promise<AppSettings> => ipcRenderer.invoke('settings:get'),
     update: (patch: Partial<AppSettings>): Promise<AppSettings> => ipcRenderer.invoke('settings:update', patch),
+  },
+  context: {
+    get: (): Promise<InterviewContextState> => ipcRenderer.invoke('context:get'),
+    save: (candidate: Partial<InterviewContextState>): Promise<InterviewContextState> =>
+      ipcRenderer.invoke('context:save', candidate),
+    importFile: (request: InterviewContextImportRequest): Promise<InterviewContextImportResult> =>
+      ipcRenderer.invoke('context:import', request),
+    removeDocument: (documentId: string): Promise<InterviewContextState> =>
+      ipcRenderer.invoke('context:removeDocument', documentId),
+    clear: (): Promise<InterviewContextState> => ipcRenderer.invoke('context:clear'),
   },
   listen: {
     start: (): Promise<{ success: boolean; error?: string }> => ipcRenderer.invoke('listen:start'),
@@ -90,6 +104,7 @@ const api = {
     onSummaryState: (listener: Listener<{ loading: boolean }>) => on('session:summary-state', listener),
     onInsights: (listener: Listener<SessionInsightsPayload>) => on('session:insights', listener),
     onInsightsState: (listener: Listener<{ loading: boolean }>) => on('session:insights-state', listener),
+    onCoach: (listener: Listener<InterviewCoachPayload | null>) => on('context:coach', listener),
   },
 };
 
