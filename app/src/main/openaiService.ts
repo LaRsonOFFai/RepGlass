@@ -9,6 +9,21 @@ type ResponseStreamEvent = {
   response?: unknown;
 };
 
+export type OpenAIModel = {
+  id: string;
+  name: string;
+};
+
+const RECOMMENDED_ANSWER_MODELS: Array<OpenAIModel> = [
+  { id: 'gpt-6-luna', name: 'GPT-6 Luna · быстро и экономно' },
+  { id: 'gpt-6-sol', name: 'GPT-6 Sol · код и сложные задачи' },
+  { id: 'gpt-6-astra', name: 'GPT-6 Astra · максимум качества' },
+  { id: 'gpt-5.6-luna', name: 'GPT-5.6 Luna · экономно' },
+  { id: 'gpt-5.6-terra', name: 'GPT-5.6 Terra · баланс' },
+  { id: 'gpt-5.6-sol', name: 'GPT-5.6 Sol · высокая точность' },
+  { id: 'gpt-5.6', name: 'GPT-5.6 · актуальный alias' },
+];
+
 export class OpenAIService {
   async validateApiKey(apiKey: string): Promise<{ success: true } | { success: false; error: string }> {
     const key = apiKey.trim();
@@ -83,11 +98,23 @@ export class OpenAIService {
     }
   }
 
+  async listModels(apiKey: string): Promise<OpenAIModel[]> {
+    const response = await fetch('https://api.openai.com/v1/models', {
+      headers: { Authorization: `Bearer ${apiKey.trim()}` },
+    });
+    const body = (await response.json().catch(() => ({}))) as {
+      data?: Array<{ id?: string }>;
+      error?: { message?: string };
+    };
+    if (!response.ok) throw new Error(body.error?.message || `Не удалось загрузить модели (${response.status})`);
+    return selectAnswerModels((body.data || []).map((model) => model.id || ''));
+  }
+
   async transcribeFile(apiKey: string, filePath: string, language?: string): Promise<string> {
     const client = new OpenAI({ apiKey });
     const result = await client.audio.transcriptions.create({
       file: fs.createReadStream(filePath),
-      model: 'gpt-4o-mini-transcribe',
+      model: 'gpt-transcribe',
       ...(language && language !== 'auto' ? { language } : {}),
     });
     const text = result.text.trim();
@@ -98,4 +125,22 @@ export class OpenAIService {
   private imageDataUrl(imagePath: string): string {
     return `data:image/png;base64,${fs.readFileSync(imagePath).toString('base64')}`;
   }
+}
+
+export function selectAnswerModels(modelIds: string[]): OpenAIModel[] {
+  const available = new Set(modelIds.filter(Boolean));
+  const recommended = RECOMMENDED_ANSWER_MODELS.filter((model) => available.has(model.id));
+  const recommendedIds = new Set(recommended.map((model) => model.id));
+  const discovered = [...available]
+    .filter((id) => !recommendedIds.has(id) && isCompatibleAnswerModel(id))
+    .sort((left, right) => right.localeCompare(left, 'en'))
+    .map((id) => ({ id, name: id }));
+  return [...recommended, ...discovered];
+}
+
+function isCompatibleAnswerModel(id: string): boolean {
+  const family = /^gpt-(\d+)/.exec(id);
+  if (!family || Number(family[1]) < 5) return false;
+  if (/-\d{4}-\d{2}-\d{2}$/.test(id)) return false;
+  return !/(?:audio|chat|codex|cyber|image|instruct|moderation|realtime|search|transcribe|tts)/i.test(id);
 }

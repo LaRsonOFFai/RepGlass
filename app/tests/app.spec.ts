@@ -50,10 +50,13 @@ test('opens transcript and every personalization section', async ({ browserName:
   await expect(page.getByText('Транскрипция пуста')).toBeVisible();
 
   await page.getByTitle('Настройки и авторизация').click();
+  await page.getByRole('button', { name: 'Подключение', exact: true }).click();
+  await expect(page.getByRole('option', { name: /GPT-6[- ]Luna/i })).toBeAttached();
   for (const section of ['Подключение', 'Профиль']) {
     await page.getByRole('button', { name: section, exact: true }).click();
   }
   await page.getByRole('button', { name: 'Аудио' }).click();
+  await expect(page.getByRole('option', { name: /GPT-Live-Transcribe/ })).toBeAttached();
   await expect(page.getByRole('button', { name: 'Оба источника' })).toHaveClass(/active/);
   await page.screenshot({ path: testInfo.outputPath('repglass-audio.png') });
   await page.getByRole('button', { name: 'Приватность' }).click();

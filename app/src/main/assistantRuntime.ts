@@ -343,8 +343,11 @@ export class AssistantRuntime {
 
     await this.realtime[source].start({
       apiKey,
+      model: settings.transcriptionModel,
       language: settings.language,
       delay: settings.transcriptionDelay,
+      prompt: transcriptionPrompt(settings.profile),
+      keywords: transcriptionKeywords(settings.profile),
       callbacks: {
         onPartial: (itemId, text) => this.emitTranscript(source, itemId, text, true),
         onFinal: (itemId, text) => void this.handleFinalTranscript(source, itemId, text),
@@ -743,6 +746,26 @@ export class AssistantRuntime {
     if (!contents || contents.isDestroyed()) return;
     contents.send(channel, payload);
   }
+}
+
+function transcriptionPrompt(profile: AppSettings['profile']): string {
+  const specialty =
+    profile === 'aqa'
+      ? 'автоматизация тестирования'
+      : profile === 'manual-qa'
+        ? 'ручное тестирование'
+        : profile === 'load-qa'
+          ? 'нагрузочное тестирование'
+          : 'разработка программного обеспечения';
+  return `Техническое собеседование по теме: ${specialty}. Речь может переключаться между русским и английским.`;
+}
+
+function transcriptionKeywords(profile: AppSettings['profile']): string[] {
+  const common = ['API', 'CI/CD', 'GitLab', 'GitHub', 'Docker', 'Kubernetes', 'SQL'];
+  if (profile === 'aqa') return [...common, 'Playwright', 'Selenium', 'Appium', 'pytest', 'JUnit'];
+  if (profile === 'manual-qa') return [...common, 'чек-лист', 'тест-кейс', 'баг-репорт'];
+  if (profile === 'load-qa') return [...common, 'JMeter', 'Gatling', 'k6', 'SLA', 'SLO'];
+  return [...common, 'TypeScript', 'JavaScript', 'Java', 'Python', 'React', 'Node.js'];
 }
 
 function uniqueSources(sources: RequestSource[]): RequestSource[] {

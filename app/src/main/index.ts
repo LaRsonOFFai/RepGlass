@@ -494,6 +494,11 @@ function registerIpc(): void {
   });
   ipcMain.handle('auth:codexStatus', () => codex.getStatus());
   ipcMain.handle('auth:codexModels', () => codex.listModels());
+  ipcMain.handle('auth:openAIModels', () => {
+    const apiKey = store.getOpenAIKey();
+    if (!apiKey) return [];
+    return openai.listModels(apiKey);
+  });
   ipcMain.handle('auth:startCodexLogin', () => codex.startLogin(openTrustedExternal));
   ipcMain.handle('auth:codexLogout', () => codex.logout());
 

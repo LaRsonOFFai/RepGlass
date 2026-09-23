@@ -7,13 +7,13 @@ import type {
   TranscriptionDelay,
 } from './types';
 
-export const SETTINGS_SCHEMA_VERSION = 2;
+export const SETTINGS_SCHEMA_VERSION = 3;
 
 export const DEFAULT_SETTINGS: AppSettings = {
   answerProvider: 'codex',
-  model: 'gpt-5.4-mini',
-  codexModel: 'gpt-5.4-mini',
-  transcriptionModel: 'gpt-realtime-whisper',
+  model: 'gpt-6-luna',
+  codexModel: 'gpt-6-sol',
+  transcriptionModel: 'gpt-live-transcribe',
   transcriptionDelay: 'low',
   language: 'ru',
   captureSource: 'both',
@@ -85,6 +85,8 @@ export function migrateSettings(
 ): Partial<AppSettings> {
   const migrated = { ...(candidate || {}) };
   if (schemaVersion < 2 && migrated.captureSource === 'system') migrated.captureSource = 'both';
+  if (schemaVersion < 3 && migrated.model === 'gpt-5.4-mini') migrated.model = 'gpt-6-luna';
+  if (schemaVersion < 3 && migrated.codexModel === 'gpt-5.4-mini') migrated.codexModel = 'gpt-6-sol';
   return migrated;
 }
 
@@ -95,7 +97,7 @@ export function normalizeSettings(candidate?: Partial<AppSettings>): AppSettings
     answerProvider: next.answerProvider === 'openai-api' ? 'openai-api' : 'codex',
     model: stringValue(next.model, DEFAULT_SETTINGS.model),
     codexModel: stringValue(next.codexModel, DEFAULT_SETTINGS.codexModel),
-    transcriptionModel: 'gpt-realtime-whisper',
+    transcriptionModel: 'gpt-live-transcribe',
     transcriptionDelay: includes(transcriptionDelays, next.transcriptionDelay, DEFAULT_SETTINGS.transcriptionDelay),
     language: stringValue(next.language, DEFAULT_SETTINGS.language).slice(0, 12),
     captureSource: includes(captureSources, next.captureSource, DEFAULT_SETTINGS.captureSource),

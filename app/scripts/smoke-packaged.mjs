@@ -9,6 +9,58 @@ import WebSocket from 'ws';
 const appRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const executable = path.join(appRoot, 'release', 'win-unpacked', 'RepGlass.exe');
 const userData = path.join(os.tmpdir(), `repglass-packaged-smoke-${process.pid}`);
+const liveApi = process.env.REPGLASS_LIVE_API === '1';
+
+async function createSpeechFixture(filePath) {
+  const command = [
+    'Add-Type -AssemblyName System.Speech',
+    '$format = New-Object System.Speech.AudioFormat.SpeechAudioFormatInfo(24000, [System.Speech.AudioFormat.AudioBitsPerSample]::Sixteen, [System.Speech.AudioFormat.AudioChannel]::Mono)',
+    '$voice = New-Object System.Speech.Synthesis.SpeechSynthesizer',
+    '$voice.SetOutputToWaveFile($env:REPGLASS_AUDIO_FIXTURE, $format)',
+    "$voice.Speak('How do I make popcorn?')",
+    '$voice.Dispose()',
+  ].join('; ');
+  await new Promise((resolve, reject) => {
+    const child = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', command], {
+      windowsHide: true,
+      env: { ...process.env, REPGLASS_AUDIO_FIXTURE: filePath },
+      stdio: ['ignore', 'ignore', 'pipe'],
+    });
+    let errorText = '';
+    child.stderr.on('data', (chunk) => (errorText += chunk.toString()));
+    child.once('error', reject);
+    child.once('close', (code) =>
+      code === 0 ? resolve() : reject(new Error(errorText.trim() || `Speech synthesis exited with ${code}`)),
+    );
+  });
+}
+
+async function readPcm24kMono(filePath) {
+  const wav = await fs.readFile(filePath);
+  let offset = 12;
+  let format;
+  let audio;
+  while (offset + 8 <= wav.length) {
+    const id = wav.toString('ascii', offset, offset + 4);
+    const size = wav.readUInt32LE(offset + 4);
+    const start = offset + 8;
+    if (id === 'fmt ') {
+      format = {
+        encoding: wav.readUInt16LE(start),
+        channels: wav.readUInt16LE(start + 2),
+        sampleRate: wav.readUInt32LE(start + 4),
+        bits: wav.readUInt16LE(start + 14),
+      };
+    }
+    if (id === 'data') audio = wav.subarray(start, start + size);
+    offset = start + size + (size % 2);
+  }
+  if (!format || format.encoding !== 1 || format.channels !== 1 || format.sampleRate !== 24_000 || format.bits !== 16) {
+    throw new Error(`Unexpected speech fixture format: ${JSON.stringify(format)}`);
+  }
+  if (!audio?.length) throw new Error('Speech fixture contains no PCM audio');
+  return audio.toString('base64');
+}
 
 async function reservePort() {
   return new Promise((resolve, reject) => {
@@ -72,6 +124,24 @@ async function run() {
   const endpoint = `http://127.0.0.1:${port}`;
   const codexHome = path.join(userData, 'codex-home');
   await fs.mkdir(codexHome, { recursive: true });
+  let liveAudioBase64 = '';
+  if (liveApi) {
+    try {
+      const sourceUserData = path.join(process.env.APPDATA || '', 'RepGlass');
+      const speechFixture = path.join(userData, 'live-stt.wav');
+      await Promise.all([
+        fs.copyFile(path.join(sourceUserData, 'repglass-store.json'), path.join(userData, 'repglass-store.json')),
+        fs.copyFile(path.join(sourceUserData, 'Local State'), path.join(userData, 'Local State')),
+        createSpeechFixture(speechFixture),
+      ]);
+      liveAudioBase64 = await readPcm24kMono(speechFixture);
+    } catch (error) {
+      if (userData.startsWith(path.join(os.tmpdir(), 'repglass-packaged-smoke-'))) {
+        await fs.rm(userData, { recursive: true, force: true }).catch(() => undefined);
+      }
+      throw error;
+    }
+  }
   const processHandle = spawn(
     executable,
     [`--user-data-dir=${userData}`, '--remote-debugging-address=127.0.0.1', `--remote-debugging-port=${port}`],
@@ -106,13 +176,17 @@ async function run() {
 
     let rendererReady = false;
     while (Date.now() < deadline) {
-      rendererReady = await evaluate(`Boolean(window.glass && document.querySelector('.workspace-panel'))`);
+      rendererReady = await evaluate(
+        `Boolean(window.glass && document.querySelector('.workspace-panel, .glass-workspace'))`,
+      );
       if (rendererReady) break;
       await new Promise((resolve) => setTimeout(resolve, 200));
     }
     if (!rendererReady) throw new Error('Packaged RepGlass workspace is missing');
 
     const result = await evaluate(`(async () => {
+      const runLiveApi = ${JSON.stringify(liveApi)};
+      const liveAudio = ${JSON.stringify(liveAudioBase64)};
       const codex = await window.glass.auth.getCodexStatus();
       const audioContext = new AudioContext({ latencyHint: 'interactive' });
       let workletLoaded = false;
@@ -130,11 +204,65 @@ async function run() {
       } finally {
         await audioContext.close();
       }
+      let liveApiResult = null;
+      if (runLiveApi) {
+        const auth = await window.glass.auth.getState();
+        if (!auth.hasApiKey) throw new Error('Copied RepGlass store has no usable API key');
+        const models = await window.glass.auth.getOpenAIModels();
+        const selectedModel = models.find((model) => model.id === 'gpt-6-luna') || models[0];
+        if (!selectedModel) throw new Error('No compatible OpenAI answer model is available');
+        const previousSettings = await window.glass.settings.get();
+        await window.glass.context.clear();
+        await window.glass.settings.update({
+          answerProvider: 'openai-api',
+          model: selectedModel.id,
+          screenContext: 'off',
+          profile: 'general',
+          answerDetail: 'brief',
+          reasoningEffort: 'low',
+          autoAnswer: false
+        });
+        try {
+          const listening = await window.glass.listen.start();
+          if (!listening.success) throw new Error(listening.error || 'Realtime transcription failed');
+          const transcript = await new Promise((resolve, reject) => {
+            const timeout = setTimeout(() => {
+              off();
+              reject(new Error('Live transcription did not return a final turn'));
+            }, 20000);
+            const off = window.glass.events.onTranscript((turn) => {
+              if (turn.speaker !== 'me' || turn.partial) return;
+              clearTimeout(timeout);
+              off();
+              resolve(turn.text);
+            });
+            window.glass.listen.sendAudioChunk({ source: 'microphone', base64: liveAudio, sampleRate: 24000 });
+            window.glass.listen.commitAudio('microphone');
+          });
+          await window.glass.listen.stop();
+          const answer = await window.glass.ask.send({
+            question: 'Ответь одним словом: готово',
+            includeScreen: false,
+            trigger: 'manual'
+          });
+          liveApiResult = {
+            availableModels: models.slice(0, 12).map((model) => model.id),
+            selectedModel: selectedModel.id,
+            realtimeConnected: true,
+            transcriptReceived: Boolean(transcript && transcript.trim()),
+            transcript,
+            answerReceived: Boolean(answer.answer && answer.answer.trim())
+          };
+        } finally {
+          await window.glass.settings.update(previousSettings);
+        }
+      }
       return {
         href: location.href,
         title: document.title,
-        workspaceVisible: Boolean(document.querySelector('.workspace-panel')),
+        workspaceVisible: Boolean(document.querySelector('.workspace-panel, .glass-workspace')),
         hasPreloadApi: Boolean(window.glass),
+        hasOpenAIModelDiscovery: typeof window.glass.auth.getOpenAIModels === 'function',
         workletLoaded,
         workletNodes,
         hasSmartAsk: typeof window.glass.ask.smart === 'function',
@@ -150,7 +278,8 @@ async function run() {
         codexAvailable: codex.available,
         codexLoggedIn: codex.loggedIn,
         codexVersion: codex.version,
-        codexError: codex.error
+        codexError: codex.error,
+        liveApi: liveApiResult
       };
     })()`);
 
@@ -159,6 +288,7 @@ async function run() {
       result.title !== 'RepGlass' ||
       !result.workspaceVisible ||
       !result.hasPreloadApi ||
+      !result.hasOpenAIModelDiscovery ||
       !result.workletLoaded ||
       result.workletNodes !== 2 ||
       !result.hasSmartAsk ||
@@ -176,6 +306,12 @@ async function run() {
     }
     if (!result.codexAvailable || !/^\d+\.\d+\.\d+/.test(result.codexVersion || '')) {
       throw new Error(`Bundled Codex App Server failed: ${result.codexError || result.codexVersion || 'no version'}`);
+    }
+    if (
+      liveApi &&
+      (!result.liveApi?.realtimeConnected || !result.liveApi?.transcriptReceived || !result.liveApi?.answerReceived)
+    ) {
+      throw new Error(`Live OpenAI API check failed: ${JSON.stringify(result.liveApi)}`);
     }
 
     console.log(JSON.stringify({ executable: path.basename(executable), pages: pages.length, ...result }, null, 2));

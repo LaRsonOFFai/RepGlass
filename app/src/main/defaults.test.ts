@@ -19,7 +19,7 @@ describe('settings', () => {
     expect(settings.answerCooldownMs).toBe(2_000);
     expect(settings.captureSource).toBe('microphone');
     expect(settings.codexModel).toBe(DEFAULT_SETTINGS.codexModel);
-    expect(settings.transcriptionModel).toBe('gpt-realtime-whisper');
+    expect(settings.transcriptionModel).toBe('gpt-live-transcribe');
   });
 
   it('builds a QA-specific prompt', () => {
@@ -37,5 +37,18 @@ describe('settings', () => {
       normalizeSettings(migrateSettings({ captureSource: 'system' }, SETTINGS_SCHEMA_VERSION)).captureSource,
     ).toBe('system');
     expect(normalizeSettings({ captureSource: 'microphone' }).captureSource).toBe('microphone');
+  });
+
+  it('migrates the previous default models to the current generation', () => {
+    const settings = normalizeSettings(
+      migrateSettings(
+        { model: 'gpt-5.4-mini', codexModel: 'gpt-5.4-mini', transcriptionModel: 'gpt-realtime-whisper' },
+        2,
+      ),
+    );
+
+    expect(settings.model).toBe('gpt-6-luna');
+    expect(settings.codexModel).toBe('gpt-6-sol');
+    expect(settings.transcriptionModel).toBe('gpt-live-transcribe');
   });
 });

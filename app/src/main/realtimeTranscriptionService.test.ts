@@ -85,7 +85,13 @@ describe('realtime transcription protocol', () => {
         audio: {
           input: {
             format: { type: string; rate: number };
-            transcription: { model: string; language: string; delay: string };
+            transcription: {
+              model: string;
+              languages: string[];
+              delay: string;
+              prompt?: string;
+              keywords?: string[];
+            };
             turn_detection: null;
           };
         };
@@ -94,14 +100,38 @@ describe('realtime transcription protocol', () => {
     expect(sessionUpdate.session.audio.input).toEqual({
       format: { type: 'audio/pcm', rate: 24_000 },
       transcription: {
-        model: 'gpt-realtime-whisper',
-        language: 'ru',
+        model: 'gpt-live-transcribe',
+        languages: ['ru', 'en'],
         delay: 'minimal',
       },
       turn_detection: null,
     });
     expect(received[1]).toEqual({ type: 'input_audio_buffer.append', audio: 'AQIDBA==' });
     expect(received[2]).toEqual({ type: 'input_audio_buffer.commit' });
+  });
+
+  it('omits language hints in automatic mode', async () => {
+    server = new WebSocketServer({ host: '127.0.0.1', port: 0 });
+    await new Promise<void>((resolve) => server?.once('listening', resolve));
+    const port = (server.address() as AddressInfo).port;
+    let sessionUpdate: Record<string, unknown> | undefined;
+
+    server.on('connection', (socket) => {
+      socket.on('message', (raw) => {
+        sessionUpdate = JSON.parse(raw.toString()) as Record<string, unknown>;
+        socket.send(JSON.stringify({ type: 'session.updated' }));
+      });
+    });
+
+    service = new RealtimeTranscriptionService();
+    await service.start({
+      apiKey: 'test-key',
+      endpoint: `ws://127.0.0.1:${port}`,
+      language: 'auto',
+      callbacks: { onPartial: vi.fn(), onFinal: vi.fn(), onError: vi.fn(), onClose: vi.fn() },
+    });
+
+    expect(JSON.stringify(sessionUpdate)).not.toContain('languages');
   });
 
   it('rejects audio with an unexpected sample rate before sending it', async () => {

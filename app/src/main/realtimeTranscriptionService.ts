@@ -10,8 +10,11 @@ type RealtimeTranscriptionCallbacks = {
 
 type StartParams = {
   apiKey: string;
+  model?: string;
   language?: string;
   delay?: TranscriptionDelay;
+  prompt?: string;
+  keywords?: string[];
   endpoint?: string;
   callbacks: RealtimeTranscriptionCallbacks;
 };
@@ -104,9 +107,11 @@ export class RealtimeTranscriptionService {
                 input: {
                   format: { type: 'audio/pcm', rate: 24_000 },
                   transcription: {
-                    model: 'gpt-realtime-whisper',
-                    language: params.language && params.language !== 'auto' ? params.language : undefined,
+                    model: params.model || 'gpt-live-transcribe',
+                    languages: expectedLanguages(params.language),
                     delay: params.delay || 'low',
+                    prompt: params.prompt,
+                    keywords: params.keywords,
                   },
                   turn_detection: null,
                 },
@@ -202,4 +207,11 @@ export class RealtimeTranscriptionService {
     this.hasBufferedAudio = false;
     this.partials.clear();
   }
+}
+
+function expectedLanguages(language?: string): string[] | undefined {
+  if (!language || language === 'auto') return undefined;
+  if (language === 'ru') return ['ru', 'en'];
+  if (language === 'en') return ['en', 'ru'];
+  return [language];
 }

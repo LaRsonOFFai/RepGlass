@@ -20,7 +20,9 @@ Electron main
 - `codexService.ts` запускает официальный bundled `codex.exe app-server --stdio` скрытым
   дочерним процессом, выполняет OAuth, получает список моделей и обрабатывает поток turns.
 - `realtimeTranscriptionService.ts` открывает Realtime WebSocket с `intent=transcription`,
-  передаёт PCM 24 kHz и обрабатывает partial/final events `GPT-Realtime-Whisper`.
+  передаёт PCM 24 kHz и обрабатывает partial/final events `GPT-Live-Transcribe`.
+- `openaiService.ts` получает доступные ответные модели через `/v1/models`, использует
+  Responses API для текста и экрана, а записи расшифровывает через `GPT-Transcribe`.
 - `assistantRuntime.ts` управляет состояниями сессии, очередью автоответов, smart Ask,
   Live Insights, финальным Summary и привязанным screen context.
 - `transcriptDedup.ts` удаляет совпадающее системное эхо из микрофонной транскрипции.

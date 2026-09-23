@@ -21,6 +21,7 @@ import type {
   TranscriptTurn,
 } from '../main/types';
 import type { CodexLoginStatus, CodexModel } from '../main/codexService';
+import type { OpenAIModel } from '../main/openaiService';
 
 type Listener<T> = (payload: T) => void;
 
@@ -38,6 +39,7 @@ const api = {
     clearApiKey: (): Promise<AuthState> => ipcRenderer.invoke('auth:clearApiKey'),
     getCodexStatus: (): Promise<CodexLoginStatus> => ipcRenderer.invoke('auth:codexStatus'),
     getCodexModels: (): Promise<CodexModel[]> => ipcRenderer.invoke('auth:codexModels'),
+    getOpenAIModels: (): Promise<OpenAIModel[]> => ipcRenderer.invoke('auth:openAIModels'),
     startCodexLogin: (): Promise<CodexLoginStatus> => ipcRenderer.invoke('auth:startCodexLogin'),
     logoutCodex: (): Promise<CodexLoginStatus> => ipcRenderer.invoke('auth:codexLogout'),
   },

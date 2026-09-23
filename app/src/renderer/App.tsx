@@ -44,6 +44,7 @@ import { isValidElement, useCallback, useEffect, useMemo, useRef, useState, type
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import type { CodexModel } from '../main/codexService';
+import type { OpenAIModel } from '../main/openaiService';
 import { PROFILE_LABELS } from '../main/defaults';
 import { DEFAULT_INTERVIEW_CONTEXT } from '../main/interviewContext';
 import type {
@@ -71,8 +72,15 @@ import { AudioCapture } from './audioCapture';
 
 const APP_NAME = 'RepGlass';
 const API_KEYS_URL = 'https://platform.openai.com/api-keys';
-const API_MODEL_OPTIONS = ['gpt-5.4-mini', 'gpt-5.4', 'gpt-5.5'];
-const FALLBACK_CODEX_MODELS = ['gpt-5.4-mini', 'gpt-5.5'];
+const FALLBACK_API_MODELS: OpenAIModel[] = [
+  { id: 'gpt-6-luna', name: 'GPT-6 Luna · быстро и экономно' },
+  { id: 'gpt-6-sol', name: 'GPT-6 Sol · код и сложные задачи' },
+  { id: 'gpt-6-astra', name: 'GPT-6 Astra · максимум качества' },
+  { id: 'gpt-5.6-luna', name: 'GPT-5.6 Luna · экономно' },
+  { id: 'gpt-5.6-terra', name: 'GPT-5.6 Terra · баланс' },
+  { id: 'gpt-5.6-sol', name: 'GPT-5.6 Sol · высокая точность' },
+];
+const FALLBACK_CODEX_MODELS = ['gpt-6-sol', 'gpt-6-luna'];
 
 type View = 'workspace' | 'settings';
 type ListenMode = 'transcript' | 'insights' | 'summary';
@@ -87,6 +95,7 @@ export function App() {
   const [auth, setAuth] = useState<AuthState>({ mode: 'none', hasApiKey: false, hasCodexAuth: false });
   const [settings, setSettings] = useState<AppSettings | null>(null);
   const [codexModels, setCodexModels] = useState<CodexModel[]>([]);
+  const [openAIModels, setOpenAIModels] = useState<OpenAIModel[]>([]);
   const [view, setView] = useState<View>('workspace');
   const [listenMode, setListenMode] = useState<ListenMode>('transcript');
   const [askOpen, setAskOpen] = useState(true);
@@ -132,6 +141,9 @@ export function App() {
         setSummary(sessionState.summary);
         setCoach(sessionState.coach);
         setInterviewContext(nextInterviewContext);
+        if (nextAuth.hasApiKey) {
+          void window.glass.auth.getOpenAIModels().then(setOpenAIModels).catch(() => undefined);
+        }
         const ready = nextSettings.answerProvider === 'codex' ? nextAuth.hasCodexAuth : nextAuth.hasApiKey;
         if (!ready) {
           setView('settings');
@@ -551,6 +563,8 @@ export function App() {
         return;
       }
       setAuth(result.auth);
+      const models = await window.glass.auth.getOpenAIModels().catch(() => []);
+      if (models.length) setOpenAIModels(models);
       setApiKey('');
       setStatus('OpenAI API подключён');
     } finally {
@@ -561,6 +575,7 @@ export function App() {
   const clearApiKey = useCallback(async () => {
     if (listening) await stopListening();
     setAuth(await window.glass.auth.clearApiKey());
+    setOpenAIModels([]);
     setApiKey('');
   }, [listening, stopListening]);
 
@@ -660,6 +675,7 @@ export function App() {
               auth={auth}
               settings={settings}
               codexModels={codexModels}
+              openAIModels={openAIModels}
               apiKey={apiKey}
               apiBusy={apiBusy}
               codexBusy={codexBusy}
@@ -1302,6 +1318,7 @@ function SettingsView(props: {
   auth: AuthState;
   settings: AppSettings;
   codexModels: CodexModel[];
+  openAIModels: OpenAIModel[];
   apiKey: string;
   apiBusy: boolean;
   codexBusy: boolean;
@@ -1426,8 +1443,8 @@ function SettingsView(props: {
                   ? codexModelOptions(props.settings.codexModel, props.codexModels).map((model) => (
                       <option key={model.id} value={model.id}>{model.name}</option>
                     ))
-                  : uniqueStrings(props.settings.model, API_MODEL_OPTIONS).map((model) => (
-                      <option key={model} value={model}>{model}</option>
+                  : openAIModelOptions(props.settings.model, props.openAIModels).map((model) => (
+                      <option key={model.id} value={model.id}>{model.name}</option>
                     ))}
               </select>
             </label>
@@ -1521,7 +1538,7 @@ function SettingsView(props: {
               <label className="field-label">
                 <span>Модель</span>
                 <select value={props.settings.transcriptionModel} disabled>
-                  <option value="gpt-realtime-whisper">GPT-Realtime-Whisper</option>
+                  <option value="gpt-live-transcribe">GPT-Live-Transcribe</option>
                 </select>
               </label>
               <label className="field-label">
@@ -1924,6 +1941,13 @@ function codexModelOptions(current: string, models: CodexModel[]): Array<{ id: s
     return normalized.some((model) => model.id === current) ? normalized : [{ id: current, name: current }, ...normalized];
   }
   return uniqueStrings(current, FALLBACK_CODEX_MODELS).map((id) => ({ id, name: id }));
+}
+
+function openAIModelOptions(current: string, models: OpenAIModel[]): OpenAIModel[] {
+  const available = models.length ? models : FALLBACK_API_MODELS;
+  return available.some((model) => model.id === current)
+    ? available
+    : [{ id: current, name: `${current} · сохранённая` }, ...available];
 }
 
 function uniqueStrings(current: string, values: string[]): string[] {
