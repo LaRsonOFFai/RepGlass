@@ -3,7 +3,22 @@
 AI-помощник для Windows: переводит разговор в текст, подсказывает ответы на вопросы
 и помогает разбирать задачи на экране. Всё — в одном компактном полупрозрачном окне.
 
-## Скачать
+## MacBook / macOS — требует тестирования
+
+**Экспериментальная версия для macOS 14.2+, требует тестирования на реальном Mac.**
+
+- **MacBook с M-процессорами (Apple Silicon):** отдельная нативная ARM64-сборка без Rosetta.
+- **MacBook с Intel:** отдельная x64-сборка.
+
+Поддержка подготовлена в [ветке `codex/macos-testing`](https://github.com/LaRsonOFFai/RepGlass/tree/codex/macos-testing)
+и [черновом PR #5](https://github.com/LaRsonOFFai/RepGlass/pull/5).
+[Инструкция и ограничения версии для Mac](https://github.com/LaRsonOFFai/RepGlass/blob/codex/macos-testing/docs/MACOS.md).
+
+**Готовый macOS-релиз пока не опубликован.** Сборка DMG, запуск, микрофон,
+системный звук и разрешения macOS ещё требуют проверки. Проверки на Windows
+не подтверждают работоспособность на Mac.
+
+## Скачать для Windows
 
 **Для Windows 10/11, 64 бит. Готовая версия — 1.2.0.**
 
