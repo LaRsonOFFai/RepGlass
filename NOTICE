@@ -1,0 +1,26 @@
+RepGlass
+Maintained by LaRsonOFFai: https://github.com/LaRsonOFFai/RepGlass
+
+RepGlass is a substantially reworked product that originated from Glass
+(Pickle Team; original repository: https://github.com/pickle-com/glass).
+The repository retains upstream history and materials, including the original
+application icons. Original contributors retain rights in their contributions;
+RepGlass contributors retain rights in their respective changes. Attribution
+must not be read as a claim of exclusive ownership of upstream materials.
+
+This project is distributed under the GNU General Public License version 3;
+see LICENSE. Its GPL license permits use, copying, modification, commercial
+distribution, and redistribution subject to the license conditions. Distributed
+modified versions must retain applicable notices and license terms, and their
+corresponding source must be made available as required by the GPL. RepGlass
+is provided without warranty as described in LICENSE.
+
+Third-party components remain subject to their own licenses. These include
+Electron and React (MIT), OpenAI Codex (Apache-2.0), and the other dependencies
+listed in app/package.json and app/package-lock.json. Their license and notice
+requirements continue to apply. The source tag accompanying each release
+identifies the corresponding RepGlass source and pinned dependency versions.
+
+The project license does not certify exclusive trademark rights or grant a
+trademark license to upstream brands. No affiliation with or endorsement by
+Pickle Team or OpenAI is claimed.
