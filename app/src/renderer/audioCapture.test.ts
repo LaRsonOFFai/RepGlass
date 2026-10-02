@@ -73,4 +73,17 @@ describe('audio capture sources', () => {
     );
     expect(systemAudio.stop).toHaveBeenCalledOnce();
   });
+
+  it('rejects an ended system audio track rather than starting silent capture', async () => {
+    const audio = { kind: 'audio' as const, readyState: 'ended', stop: vi.fn() };
+    const video = { kind: 'video' as const, stop: vi.fn() };
+    vi.stubGlobal('MediaStream', FakeMediaStream);
+    vi.stubGlobal('navigator', {
+      mediaDevices: { getDisplayMedia: vi.fn().mockResolvedValue(new FakeMediaStream([audio, video])) },
+    });
+    const capture = new AudioCapture() as unknown as TestableCapture;
+    await expect(capture.createStreams('system')).rejects.toThrow('Системная аудиодорожка недоступна');
+    expect(audio.stop).toHaveBeenCalledOnce();
+    expect(video.stop).toHaveBeenCalled();
+  });
 });

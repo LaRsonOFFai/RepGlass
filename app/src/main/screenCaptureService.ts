@@ -2,6 +2,7 @@ import { app, desktopCapturer, screen } from 'electron';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
+import { checkScreenPermission } from './mediaPermissions';
 
 export type CapturedScreen = {
   path: string;
@@ -12,6 +13,7 @@ export type CapturedScreen = {
 
 export class ScreenCaptureService {
   async captureCurrentDisplay(): Promise<CapturedScreen> {
+    checkScreenPermission();
     const point = screen.getCursorScreenPoint();
     const display = screen.getDisplayNearestPoint(point);
     const scale = Math.min(1, 1_920 / Math.max(display.size.width, 1));

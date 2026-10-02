@@ -150,9 +150,9 @@ export class AudioCapture {
     });
     const audioTracks = displayStream.getAudioTracks();
     displayStream.getVideoTracks().forEach((track) => track.stop());
-    if (!audioTracks.length) {
+    if (!audioTracks.length || audioTracks.every((track) => track.readyState === 'ended')) {
       displayStream.getTracks().forEach((track) => track.stop());
-      throw new Error('Системная аудиодорожка недоступна. Проверьте настройки вывода звука Windows.');
+      throw new Error('Системная аудиодорожка недоступна. Проверьте разрешение на запись системного аудио и настройки вывода звука. На macOS разрешите RepGlass запись экрана и системного аудио в Системных настройках и перезапустите приложение.');
     }
     return new MediaStream(audioTracks);
   }

@@ -23,3 +23,7 @@ npm run dist
 
 Результат создаётся в `release`. Полное руководство на русском находится в
 [корневом README](../README.md).
+
+На macOS: `npm run dist:mac:arm64` для M-процессоров или `npm run dist:mac:x64`
+для Intel. Сборка создаёт DMG и ZIP. [Инструкция для MacBook](../docs/MACOS.md).
+**Версия для macOS экспериментальная и требует тестирования на реальном Mac.**

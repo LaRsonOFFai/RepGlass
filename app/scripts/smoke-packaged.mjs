@@ -7,7 +7,9 @@ import { fileURLToPath } from 'node:url';
 import WebSocket from 'ws';
 
 const appRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const executable = path.join(appRoot, 'release', 'win-unpacked', 'RepGlass.exe');
+const executable = process.platform === 'darwin'
+  ? path.join(appRoot, 'release', process.arch === 'arm64' ? 'mac-arm64' : 'mac', 'RepGlass.app', 'Contents', 'MacOS', 'RepGlass')
+  : path.join(appRoot, 'release', 'win-unpacked', 'RepGlass.exe');
 const userData = path.join(os.tmpdir(), `repglass-packaged-smoke-${process.pid}`);
 const liveApi = process.env.REPGLASS_LIVE_API === '1';
 
@@ -118,7 +120,8 @@ function connectCdp(webSocketUrl) {
 }
 
 async function run() {
-  if (process.platform !== 'win32') throw new Error('Packaged smoke test currently supports Windows only');
+  if (!['win32', 'darwin'].includes(process.platform)) throw new Error('Packaged smoke test supports Windows and macOS');
+  if (liveApi && process.platform !== 'win32') throw new Error('Live API smoke test currently supports Windows only');
   await fs.access(executable);
   const port = await reservePort();
   const endpoint = `http://127.0.0.1:${port}`;

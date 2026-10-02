@@ -20,8 +20,11 @@
     "screenshots": "npm --prefix app run screenshots",
     "verify": "npm --prefix app run verify",
     "build": "npm --prefix app run build",
-    "build:win": "npm --prefix app run dist",
-    "audit:app": "npm --prefix app audit --omit=dev"
+    "build:win": "npm --prefix app run dist:win",
+    "audit:app": "npm --prefix app audit --omit=dev",
+    "build:mac": "npm --prefix app run dist:mac",
+    "build:mac:arm64": "npm --prefix app run dist:mac:arm64",
+    "build:mac:x64": "npm --prefix app run dist:mac:x64"
   },
   "engines": {
     "node": ">=24.0.0",

@@ -69,7 +69,7 @@ export class SecureStore {
     if (!trimmed) throw new Error('OpenAI API key is empty');
 
     if (!safeStorage.isEncryptionAvailable()) {
-      throw new Error('Windows secure storage is unavailable; the API key was not saved');
+      throw new Error('System secure storage is unavailable; the API key was not saved');
     }
 
     const store = this.read();
@@ -123,7 +123,7 @@ export class SecureStore {
 
   saveInterviewContext(candidate: Partial<InterviewContextState>): InterviewContextState {
     if (!safeStorage.isEncryptionAvailable()) {
-      throw new Error('Windows secure storage is unavailable; the interview profile was not saved');
+      throw new Error('System secure storage is unavailable; the interview profile was not saved');
     }
     const next = normalizeInterviewContext({ ...candidate, updatedAt: Date.now() });
     const encrypted = safeStorage.encryptString(JSON.stringify(next)).toString('base64');
