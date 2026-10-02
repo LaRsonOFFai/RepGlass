@@ -32,6 +32,10 @@ function on<T>(channel: string, listener: Listener<T>) {
 }
 
 const api = {
+  platform: process.platform,
+  media: {
+    prepareAudio: (source: AppSettings['captureSource']): Promise<void> => ipcRenderer.invoke('media:prepareAudio', source),
+  },
   auth: {
     getState: (): Promise<AuthState> => ipcRenderer.invoke('auth:getState'),
     saveApiKey: (apiKey: string): Promise<{ success: true; auth: AuthState } | { success: false; error: string }> =>

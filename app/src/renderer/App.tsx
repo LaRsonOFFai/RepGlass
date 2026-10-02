@@ -71,6 +71,8 @@ import type {
 import { AudioCapture } from './audioCapture';
 
 const APP_NAME = 'RepGlass';
+const IS_MAC = window.glass.platform === 'darwin';
+const SHORTCUT_MODIFIER = IS_MAC ? '⌘' : 'Ctrl';
 const API_KEYS_URL = 'https://platform.openai.com/api-keys';
 const FALLBACK_API_MODELS: OpenAIModel[] = [
   { id: 'gpt-6-luna', name: 'GPT-6 Luna · быстро и экономно' },
@@ -288,6 +290,12 @@ export function App() {
     setView('workspace');
     setListenMode('transcript');
     setErrorMessage('');
+    try {
+      await window.glass.media.prepareAudio(settings.captureSource);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Не удалось получить разрешение на аудиозахват');
+      return;
+    }
     const result = await window.glass.listen.start();
     if (!result.success) {
       setErrorMessage(result.error || 'Не удалось начать прослушивание');
@@ -597,7 +605,7 @@ export function App() {
       <header className="command-capsule">
         <button
           className={`listen-control ${listening ? 'active' : ''}`}
-          title={`${listening ? 'Поставить на паузу' : 'Начать прослушивание'} — Ctrl+Shift+L`}
+          title={`${listening ? 'Поставить на паузу' : 'Начать прослушивание'} — ${SHORTCUT_MODIFIER}+Shift+L`}
           onClick={listening ? stopListening : startListening}
         >
           {listening ? <Pause size={14} /> : <Play size={14} />}
@@ -607,7 +615,7 @@ export function App() {
 
         <button
           className={askOpen && view === 'workspace' ? 'header-action active' : 'header-action'}
-          title="Открыть Ask — Ctrl+Shift+Q"
+          title={`Открыть Ask — ${SHORTCUT_MODIFIER}+Shift+Q`}
           onClick={() => {
             setView('workspace');
             setAskOpen((current) => !current);
@@ -616,10 +624,10 @@ export function App() {
         >
           <MessageSquareText size={14} />
           <span>Ask</span>
-          <kbd>Ctrl ↵</kbd>
+          <kbd>{SHORTCUT_MODIFIER} ↵</kbd>
         </button>
 
-        <button className="header-action" title="Скрыть RepGlass — Ctrl+\\" onClick={() => window.glass.window.hide()}>
+        <button className="header-action" title={`Скрыть RepGlass — ${SHORTCUT_MODIFIER}+\\`} onClick={() => window.glass.window.hide()}>
           <EyeOff size={14} />
           <span>Скрыть</span>
         </button>
@@ -632,7 +640,7 @@ export function App() {
             {activeModelLabel}
           </span>
         )}
-        <span className="privacy-indicator" title="Окно защищено от захвата экрана">
+        <span className="privacy-indicator" title={IS_MAC ? 'Защита окна имеет ограничения при захвате через ScreenCaptureKit' : 'Окно защищено от захвата экрана'}>
           <EyeOff size={14} />
         </span>
         <button className="icon-button" title="Начать новую сессию" onClick={clearSession} disabled={!hasConversation}>
@@ -1296,7 +1304,7 @@ function Composer(props: {
         ref={props.inputRef}
         value={props.question}
         placeholder="Задать вопрос..."
-        title="Текстовый вопрос — Ctrl+Shift+Q, умный запрос — Ctrl+Enter"
+        title={`Текстовый вопрос — ${SHORTCUT_MODIFIER}+Shift+Q, умный запрос — ${SHORTCUT_MODIFIER}+Enter`}
         onChange={(event) => props.onQuestionChange(event.target.value)}
         onKeyDown={(event) => {
           if (event.key === 'Enter') {
@@ -1607,7 +1615,7 @@ function SettingsView(props: {
             <ToggleRow
               checked={props.settings.captureProtection}
               title="Исключать оверлей из захвата"
-              description="Использует системную защиту Electron/Windows."
+              description={IS_MAC ? 'Захват через ScreenCaptureKit может показать окно даже при включённой защите.' : 'Использует системную защиту Electron/Windows.'}
               onChange={(checked) => props.onUpdateSettings({ captureProtection: checked })}
             />
             <ToggleRow
@@ -1626,7 +1634,7 @@ function SettingsView(props: {
 
           <div className="privacy-note">
             <ShieldCheck size={18} />
-            <p>Ключ API шифруется через Windows DPAPI. Codex OAuth обслуживается официальным Codex App Server.</p>
+            <p>Ключ API шифруется через {IS_MAC ? 'macOS Keychain' : 'Windows DPAPI'}. Codex OAuth обслуживается официальным Codex App Server.</p>
           </div>
         </div>
       )}
@@ -1870,7 +1878,7 @@ function requestSourceLabel(source: AssistantRequestPayload['sources'][number]):
 
 function requestTriggerLabel(trigger: AssistantRequestPayload['trigger']): string {
   if (trigger === 'auto') return 'Вопрос собеседника';
-  if (trigger === 'hotkey') return 'Умный запрос Ctrl+Enter';
+  if (trigger === 'hotkey') return `Умный запрос ${SHORTCUT_MODIFIER}+Enter`;
   if (trigger === 'insight') return 'Запрос из живых выводов';
   if (trigger === 'coach') return 'Подготовка по профилю';
   return 'Ручной вопрос';

@@ -22,7 +22,11 @@
     "smoke:packaged": "node scripts/smoke-packaged.mjs",
     "screenshots": "npm run build && node scripts/capture-screenshots.mjs",
     "verify": "npm run typecheck && npm run lint && npm run test && npm run build",
-    "dist": "electron-vite build && electron-builder --publish never"
+    "dist": "electron-vite build && electron-builder --publish never",
+    "dist:win": "electron-vite build && electron-builder --win --publish never",
+    "dist:mac": "electron-vite build && electron-builder --mac --publish never",
+    "dist:mac:arm64": "electron-vite build && electron-builder --mac --arm64 --publish never",
+    "dist:mac:x64": "electron-vite build && electron-builder --mac --x64 --publish never"
   },
   "dependencies": {
     "@electron-toolkit/utils": "^4.0.0",
@@ -64,6 +68,7 @@
     },
     "files": [
       "out/**/*",
+      "assets/logo.png",
       "package.json"
     ],
     "asarUnpack": [
@@ -96,6 +101,25 @@
       "enableEmbeddedAsarIntegrityValidation": true,
       "onlyLoadAppFromAsar": true,
       "grantFileProtocolExtraPrivileges": false
+    },
+    "mac": {
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "icon": "assets/logo.icns",
+      "category": "public.app-category.productivity",
+      "minimumSystemVersion": "14.2",
+      "artifactName": "RepGlass-${version}-macOS-${arch}.${ext}",
+      "identity": "-",
+      "hardenedRuntime": true,
+      "entitlements": "assets/entitlements.mac.plist",
+      "entitlementsInherit": "assets/entitlements.mac.plist",
+      "notarize": false,
+      "extendInfo": {
+        "NSMicrophoneUsageDescription": "RepGlass использует микрофон для транскрипции вашей речи.",
+        "NSAudioCaptureUsageDescription": "RepGlass записывает системный звук для транскрипции собеседника."
+      }
     }
   }
 }

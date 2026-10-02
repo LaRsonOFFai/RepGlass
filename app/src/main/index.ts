@@ -23,6 +23,7 @@ import { AssistantRuntime } from './assistantRuntime';
 import { CodexService } from './codexService';
 import { extractInterviewFile } from './interviewContextFiles';
 import { OpenAIService } from './openaiService';
+import { checkScreenPermission, prepareAudioCapture } from './mediaPermissions';
 import { ScreenCaptureService } from './screenCaptureService';
 import { SecureStore } from './secureStore';
 import type {
@@ -37,6 +38,7 @@ import type {
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const APP_NAME = 'RepGlass';
+const SHORTCUT_MODIFIER = process.platform === 'darwin' ? '⌘' : 'Ctrl';
 const RENDERER_SCHEME = 'repglass';
 const TRUSTED_EXTERNAL_ORIGINS = new Set([
   'https://auth.openai.com',
@@ -84,6 +86,9 @@ const codex = new CodexService();
 const screenCapture = new ScreenCaptureService();
 
 function createTrayIcon() {
+  if (process.platform === 'darwin') {
+    return nativeImage.createFromPath(path.join(app.getAppPath(), 'assets/logo.png')).resize({ width: 18, height: 18 });
+  }
   const svg = [
     '<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">',
     '<rect width="32" height="32" rx="7" fill="#121518"/>',
@@ -375,7 +380,7 @@ function updateTrayMenu(): void {
         revealWindow({ interactive: true, view: 'answers' });
       },
     },
-    { label: 'Защита окна от захвата включена', enabled: false },
+    { label: process.platform === 'darwin' ? 'Защита окна: ограничения ScreenCaptureKit' : 'Защита окна от захвата включена', enabled: false },
   ];
   if (!app.isPackaged) {
     template.push({
@@ -385,10 +390,10 @@ function updateTrayMenu(): void {
   }
   template.push(
     { type: 'separator' },
-    { label: 'Ctrl+Shift+G: активировать / скрыть окно', enabled: false },
-    { label: 'Ctrl+Shift+Q: текстовый вопрос', enabled: false },
-    { label: 'Ctrl+Shift+L: прослушивание', enabled: false },
-    { label: 'Ctrl+Enter: текст / аудио / экран', enabled: false },
+    { label: `${SHORTCUT_MODIFIER}+Shift+G: активировать / скрыть окно`, enabled: false },
+    { label: `${SHORTCUT_MODIFIER}+Shift+Q: текстовый вопрос`, enabled: false },
+    { label: `${SHORTCUT_MODIFIER}+Shift+L: прослушивание`, enabled: false },
+    { label: `${SHORTCUT_MODIFIER}+Enter: текст / аудио / экран`, enabled: false },
     { type: 'separator' },
     { label: 'Выход', click: () => app.quit() },
   );
@@ -477,6 +482,7 @@ async function getAuthState() {
 }
 
 function registerIpc(): void {
+  ipcMain.handle('media:prepareAudio', (_event, source: AppSettings['captureSource']) => prepareAudioCapture(source));
   ipcMain.handle('auth:getState', getAuthState);
   ipcMain.handle('auth:saveApiKey', async (_event, apiKey: string) => {
     const validation = await openai.validateApiKey(apiKey);
@@ -631,6 +637,7 @@ function configureMediaCapture(): void {
   session.defaultSession.setDisplayMediaRequestHandler(
     async (_request, callback) => {
       try {
+        checkScreenPermission();
         const display = screen.getDisplayNearestPoint(screen.getCursorScreenPoint());
         const sources = await desktopCapturer.getSources({ types: ['screen'], thumbnailSize: { width: 1, height: 1 } });
         const source = sources.find((candidate) => candidate.display_id === String(display.id)) || sources[0];
@@ -664,6 +671,13 @@ if (hasSingleInstanceLock) {
     });
 
     registerIpc();
+    if (process.platform === 'darwin') {
+      Menu.setApplicationMenu(Menu.buildFromTemplate([
+        { role: 'appMenu' },
+        { role: 'editMenu' },
+        { role: 'windowMenu' },
+      ]));
+    }
     createWindow();
     createTray();
     registerShortcuts();
