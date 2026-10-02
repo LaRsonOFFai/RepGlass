@@ -17,6 +17,7 @@
     "test": "npm --prefix app run test",
     "test:e2e": "npm --prefix app run test:e2e",
     "smoke:packaged": "npm --prefix app run smoke:packaged",
+    "screenshots": "npm --prefix app run screenshots",
     "verify": "npm --prefix app run verify",
     "build": "npm --prefix app run build",
     "build:win": "npm --prefix app run dist",

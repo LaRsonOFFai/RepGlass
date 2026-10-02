@@ -20,6 +20,7 @@
     "test": "vitest run src",
     "test:e2e": "npm run build && playwright test",
     "smoke:packaged": "node scripts/smoke-packaged.mjs",
+    "screenshots": "npm run build && node scripts/capture-screenshots.mjs",
     "verify": "npm run typecheck && npm run lint && npm run test && npm run build",
     "dist": "electron-vite build && electron-builder --publish never"
   },
